@@ -14,21 +14,35 @@ router.get("/", (req, res) => {
   });
 });
 
-// POST create project  (also inserts 3 default stages)
+// POST create project with custom stages
 router.post("/", (req, res) => {
-  const { project_name, description } = req.body;
+  const { project_name, description, start_date, end_date, stages } = req.body;
+  if (!project_name || !project_name.trim()) {
+    return res.status(400).json({ error: "project_name is required" });
+  }
+
   db.query(
-    "INSERT INTO project (project_name, description) VALUES (?, ?)",
-    [project_name, description],
+    "INSERT INTO project (project_name, description, start_date, end_date) VALUES (?, ?, ?, ?)",
+    [project_name.trim(), description || "", start_date || null, end_date || null],
     (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
       const pid = result.insertId;
+
+      const stageRows = (stages && stages.length > 0) ? stages : [
+        { status_name: "Pending",     is_completed: 0, task_limit: null },
+        { status_name: "In Progress", is_completed: 0, task_limit: null },
+        { status_name: "Completed",   is_completed: 1, task_limit: null },
+      ];
+
+      const values = stageRows.map((s, i) => [
+        pid, s.status_name, i + 1, s.is_completed ? 1 : 0, s.task_limit || null,
+      ]);
+      const placeholders = values.map(() => "(?,?,?,?,?)").join(",");
+      const flat = values.flat();
+
       db.query(
-        `INSERT INTO project_status (project_id, status_name, order_number, is_completed, task_limit)
-         VALUES (?,  'Pending',     1, 0, NULL),
-                (?,  'In Progress', 2, 0, NULL),
-                (?,  'Completed',   3, 1, NULL)`,
-        [pid, pid, pid],
+        `INSERT INTO project_status (project_id, status_name, order_number, is_completed, task_limit) VALUES ${placeholders}`,
+        flat,
         (err2) => {
           if (err2) return res.status(500).json({ error: err2.message });
           res.status(201).json({ project_id: pid, message: "Project created" });
@@ -38,11 +52,49 @@ router.post("/", (req, res) => {
   );
 });
 
+// PUT /projects/:projectId — edit project details
+router.put("/:projectId", (req, res) => {
+  const { project_name, description, start_date, end_date } = req.body;
+  const fields = [];
+  const values = [];
+
+  if (project_name !== undefined) { fields.push("project_name = ?"); values.push(project_name.trim()); }
+  if (description  !== undefined) { fields.push("description = ?");  values.push(description); }
+  if (start_date   !== undefined) { fields.push("start_date = ?");   values.push(start_date || null); }
+  if (end_date     !== undefined) { fields.push("end_date = ?");     values.push(end_date || null); }
+
+  if (!fields.length) return res.status(400).json({ error: "Nothing to update" });
+  values.push(req.params.projectId);
+
+  db.query(
+    `UPDATE project SET ${fields.join(", ")} WHERE project_id = ?`,
+    values,
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: "Project updated" });
+    }
+  );
+});
+
+// DELETE /projects/:projectId — cascade delete tasks, stages, then project
+router.delete("/:projectId", (req, res) => {
+  const pid = req.params.projectId;
+  db.query("DELETE FROM task WHERE project_id = ?", [pid], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    db.query("DELETE FROM project_status WHERE project_id = ?", [pid], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      db.query("DELETE FROM project WHERE project_id = ?", [pid], (err3) => {
+        if (err3) return res.status(500).json({ error: err3.message });
+        res.json({ message: "Project deleted" });
+      });
+    });
+  });
+});
+
 /* ================================================================
    STAGES  (nested under /projects/:projectId/stages)
    ================================================================ */
 
-// GET all stages for a project
 router.get("/:projectId/stages", (req, res) => {
   db.query(
     "SELECT * FROM project_status WHERE project_id = ? ORDER BY order_number ASC",
@@ -54,22 +106,19 @@ router.get("/:projectId/stages", (req, res) => {
   );
 });
 
-// ── PUT  /projects/:projectId/stages/reorder  ──────────────────────────────
-// Body: { stages: [{ status_id, order_number }, …] }
-// Must be declared BEFORE  /:projectId/stages/:stageId  so Express matches it first.
+// MUST be before /:projectId/stages/:stageId
 router.put("/:projectId/stages/reorder", (req, res) => {
   const { stages } = req.body;
   if (!stages || !stages.length) return res.json({ message: "Nothing to reorder" });
 
-  const promises = stages.map(
-    ({ status_id, order_number }) =>
-      new Promise((resolve, reject) => {
-        db.query(
-          "UPDATE project_status SET order_number = ? WHERE status_id = ? AND project_id = ?",
-          [order_number, status_id, req.params.projectId],
-          (err) => (err ? reject(err) : resolve())
-        );
-      })
+  const promises = stages.map(({ status_id, order_number }) =>
+    new Promise((resolve, reject) => {
+      db.query(
+        "UPDATE project_status SET order_number = ? WHERE status_id = ? AND project_id = ?",
+        [order_number, status_id, req.params.projectId],
+        (err) => (err ? reject(err) : resolve())
+      );
+    })
   );
 
   Promise.all(promises)
@@ -77,59 +126,51 @@ router.put("/:projectId/stages/reorder", (req, res) => {
     .catch((err) => res.status(500).json({ error: err.message }));
 });
 
-// ── POST  /projects/:projectId/stages  ────────────────────────────────────
 router.post("/:projectId/stages", (req, res) => {
   const pid = req.params.projectId;
-  const { status_name, order_number, is_completed = false, task_limit = null } = req.body;
+  const { status_name, is_completed = false, task_limit = null } = req.body;
+  const rawOrderNumber = req.body.order_number;
 
-  db.query(
-    "SELECT MAX(order_number) AS mx FROM project_status WHERE project_id = ?",
-    [pid],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+  if (!status_name || !status_name.trim()) {
+    return res.status(400).json({ error: "status_name is required" });
+  }
 
-      const max        = rows[0].mx ?? 0;
-      const target     = Math.min(Math.max(1, Number(order_number) || max + 1), max + 1);
+  db.query("SELECT MAX(order_number) AS mx FROM project_status WHERE project_id = ?", [pid], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
 
-      // Shift existing stages down to make room
-      db.query(
-        "UPDATE project_status SET order_number = order_number + 1 WHERE project_id = ? AND order_number >= ?",
-        [pid, target],
-        (err2) => {
-          if (err2) return res.status(500).json({ error: err2.message });
+    const max = rows[0]?.mx != null ? Number(rows[0].mx) : 0;
+    const parsed = parseInt(rawOrderNumber, 10);
+    const target = !isNaN(parsed) && parsed >= 1 ? Math.min(parsed, max + 1) : max + 1;
 
-          db.query(
-            `INSERT INTO project_status
-               (project_id, status_name, order_number, is_completed, task_limit)
-             VALUES (?, ?, ?, ?, ?)`,
-            [pid, status_name, target, is_completed ? 1 : 0, task_limit],
-            (err3, result) => {
-              if (err3) return res.status(500).json({ error: err3.message });
-              res.status(201).json({ status_id: result.insertId, order_number: target });
-            }
-          );
-        }
-      );
-    }
-  );
+    db.query(
+      "UPDATE project_status SET order_number = order_number + 1 WHERE project_id = ? AND order_number >= ?",
+      [pid, target],
+      (err2) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        db.query(
+          `INSERT INTO project_status (project_id, status_name, order_number, is_completed, task_limit) VALUES (?, ?, ?, ?, ?)`,
+          [pid, status_name.trim(), target, is_completed ? 1 : 0, task_limit || null],
+          (err3, result) => {
+            if (err3) return res.status(500).json({ error: err3.message });
+            res.status(201).json({ status_id: result.insertId, order_number: target });
+          }
+        );
+      }
+    );
+  });
 });
 
-// ── PUT  /projects/:projectId/stages/:stageId  ────────────────────────────
-// Updates name, is_completed, task_limit.  Does NOT touch order_number here
-// (use the /reorder endpoint for that).
 router.put("/:projectId/stages/:stageId", (req, res) => {
   const { stageId, projectId } = req.params;
   const { status_name, is_completed, task_limit } = req.body;
-
   const fields = [];
   const values = [];
 
-  if (status_name  !== undefined) { fields.push("status_name = ?");  values.push(status_name); }
+  if (status_name  !== undefined) { fields.push("status_name = ?");  values.push(status_name.trim()); }
   if (is_completed !== undefined) { fields.push("is_completed = ?"); values.push(is_completed ? 1 : 0); }
-  if (task_limit   !== undefined) { fields.push("task_limit = ?");   values.push(task_limit); }
+  if (task_limit   !== undefined) { fields.push("task_limit = ?");   values.push(task_limit || null); }
 
   if (!fields.length) return res.status(400).json({ error: "Nothing to update" });
-
   values.push(stageId, projectId);
 
   db.query(
@@ -142,7 +183,6 @@ router.put("/:projectId/stages/:stageId", (req, res) => {
   );
 });
 
-// ── DELETE  /projects/:projectId/stages/:stageId  ────────────────────────
 router.delete("/:projectId/stages/:stageId", (req, res) => {
   const { stageId, projectId } = req.params;
 
@@ -154,11 +194,8 @@ router.delete("/:projectId/stages/:stageId", (req, res) => {
       if (!rows.length) return res.status(404).json({ error: "Stage not found" });
 
       const { order_number } = rows[0];
-
       db.query("DELETE FROM project_status WHERE status_id = ?", [stageId], (err2) => {
         if (err2) return res.status(500).json({ error: err2.message });
-
-        // Close the gap
         db.query(
           "UPDATE project_status SET order_number = order_number - 1 WHERE project_id = ? AND order_number > ?",
           [projectId, order_number],

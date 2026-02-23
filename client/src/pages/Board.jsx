@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-
 import {
   DndContext,
   closestCenter,
@@ -17,13 +16,51 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-
-import Modal from "../components/Modal.jsx";
 import "./Board.css";
 
 const API = "http://localhost:5000/api";
 
-/* ─── Draggable pill for rearrange modal ────────────────────────────────────*/
+async function apiFetch(url, method = "GET", body, raw = false) {
+  const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (body) opts.body = JSON.stringify(body);
+  try {
+    const res = await fetch(url, opts);
+    if (raw) return res;
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      console.error(method, url, res.status, e);
+      return e;
+    }
+    return res.json();
+  } catch (e) {
+    console.error("Network:", url, e);
+    if (raw) throw e;
+    return {};
+  }
+}
+
+/* ── Modal ───────────────────────────────────────────────────────────────── */
+function Modal({ children, onClose }) {
+  useEffect(() => {
+    const h = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", h);
+    return () => document.removeEventListener("keydown", h);
+  }, [onClose]);
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+        <button className="modal-x" onClick={onClose}>
+          ✕
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ── Sortable pill for rearrange ─────────────────────────────────────────── */
 function SortableStage({ stage }) {
   const {
     attributes,
@@ -39,7 +76,7 @@ function SortableStage({ stage }) {
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.45 : 1,
+        opacity: isDragging ? 0.4 : 1,
       }}
       className="rearrange-pill"
       {...attributes}
@@ -47,102 +84,103 @@ function SortableStage({ stage }) {
     >
       <span className="rearrange-grip">⠿</span>
       {stage.status_name}
-      {stage.is_completed ? <span className="pill-badge">✓ Final</span> : null}
+      {(stage.is_completed === 1 || stage.is_completed === true) && (
+        <span className="pill-badge">✓ Final</span>
+      )}
     </div>
   );
 }
 
-/* ─── Board ─────────────────────────────────────────────────────────────────*/
+/* ── Board ───────────────────────────────────────────────────────────────── */
 export default function Board() {
   const { id } = useParams();
   const navigate = useNavigate();
-
   const [project, setProject] = useState(null);
   const [stages, setStages] = useState([]);
-  const [tasksByColumn, setTasksByColumn] = useState({});
+  const [tasksByColumn, setTBC] = useState({});
   const [activeTask, setActiveTask] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  /* Task modal */
-  const [showTaskModal, setShowTaskModal] = useState(false);
+  // Task modal
+  const [showTask, setShowTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskDescription, setTaskDescription] = useState("");
+  const [tTitle, setTTitle] = useState("");
+  const [tDesc, setTDesc] = useState("");
+  const [tPriority, setTPriority] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
 
-  /* Stage modal (create + edit share one modal) */
-  const [showStageModal, setShowStageModal] = useState(false);
-  const [editingStage, setEditingStage] = useState(null);
-  const [stageName, setStageName] = useState("");
-  const [stageIsCompleted, setStageIsCompleted] = useState(false);
-  const [stagePosition, setStagePosition] = useState("");
-  const [stageTaskLimit, setStageTaskLimit] = useState("");
+  // Subtask modal
+  const [showSubtask, setShowSubtask] = useState(false);
+  const [subtaskParent, setSubtaskParent] = useState(null);
+  const [subtasks, setSubtasks] = useState([]);
+  const [stTitle, setStTitle] = useState("");
+  const [stDesc, setStDesc] = useState("");
+  const [savingST, setSavingST] = useState(false);
+  const [loadingST, setLoadingST] = useState(false);
 
-  /* Completed-stage conflict */
+  // Stage modal
+  const [showStage, setShowStage] = useState(false);
+  const [editStage, setEditStage] = useState(null);
+  const [sgName, setSgName] = useState("");
+  const [sgCompleted, setSgCompleted] = useState(false);
+  const [sgPosition, setSgPosition] = useState("");
+  const [sgLimit, setSgLimit] = useState("");
+  const [savingSg, setSavingSg] = useState(false);
+
+  // Conflict
   const [showConflict, setShowConflict] = useState(false);
-  const [pendingPayload, setPendingPayload] = useState(null);
+  const [pendingPayload, setPendingPL] = useState(null);
   const [pendingIsEdit, setPendingIsEdit] = useState(false);
 
-  /* Rearrange modal */
+  // Rearrange
   const [showRearrange, setShowRearrange] = useState(false);
-  const [rearrangeList, setRearrangeList] = useState([]);
-  const [savingRearrange, setSavingRearrange] = useState(false);
+  const [rrList, setRRList] = useState([]);
+  const [savingRR, setSavingRR] = useState(false);
 
-  /* Confirm modal */
-  const [confirmAction, setConfirmAction] = useState(null);
+  // Confirm
+  const [confirm, setConfirm] = useState(null);
 
-  const sensors = useSensors(useSensor(PointerSensor));
-  const rearrangeSensors = useSensors(useSensor(PointerSensor));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+  const rrSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
 
   useEffect(() => {
-    fetchProject();
-    fetchStages();
-    fetchTasks();
+    setLoading(true);
+    Promise.all([fetchProject(), fetchStages(), fetchTasks()]).finally(() =>
+      setLoading(false),
+    );
   }, [id]);
 
-  /* ── Fetchers ─────────────────────────────────────────────────────────── */
-
   const fetchProject = async () => {
-    try {
-      const data = await fetch(`${API}/projects`).then((r) => r.json());
-      const p = data.find((x) => String(x.project_id) === String(id));
+    const d = await apiFetch(`${API}/projects`);
+    if (Array.isArray(d)) {
+      const p = d.find((x) => String(x.project_id) === String(id));
       if (p) setProject(p);
-    } catch (e) {
-      console.error("fetchProject:", e);
     }
   };
-
   const fetchStages = async () => {
-    try {
-      const data = await fetch(`${API}/projects/${id}/stages`).then((r) =>
-        r.json(),
-      );
-      setStages([...data].sort((a, b) => a.order_number - b.order_number));
-    } catch (e) {
-      console.error("fetchStages:", e);
-    }
+    const d = await apiFetch(`${API}/projects/${id}/stages`);
+    if (Array.isArray(d))
+      setStages([...d].sort((a, b) => a.order_number - b.order_number));
   };
-
   const fetchTasks = async () => {
-    try {
-      const data = await fetch(`${API}/tasks/project/${id}`).then((r) =>
-        r.json(),
-      );
-      const grouped = {};
-      data.forEach((task) => {
-        if (!grouped[task.status_id]) grouped[task.status_id] = [];
-        grouped[task.status_id].push(task);
-      });
-      // The DB query already orders by position, but sort client-side too for safety
-      Object.values(grouped).forEach((arr) =>
-        arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
-      );
-      setTasksByColumn(grouped);
-    } catch (e) {
-      console.error("fetchTasks:", e);
-    }
+    const d = await apiFetch(`${API}/tasks/project/${id}`);
+    if (!Array.isArray(d)) return;
+    const g = {};
+    d.forEach((t) => {
+      if (!g[t.status_id]) g[t.status_id] = [];
+      g[t.status_id].push(t);
+    });
+    Object.values(g).forEach((arr) =>
+      arr.sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
+    );
+    setTBC(g);
   };
 
-  /* ── Task drag ────────────────────────────────────────────────────────── */
-
+  /* ── Drag ───────────────────────────────────────────────────────────────── */
   const handleDragStart = ({ active }) => {
     for (const tasks of Object.values(tasksByColumn)) {
       const t = tasks.find((x) => x.task_id === active.id);
@@ -152,119 +190,319 @@ export default function Board() {
       }
     }
   };
-
   const handleDragEnd = async ({ active, over }) => {
     setActiveTask(null);
     if (!over) return;
-
-    const source = active.data.current?.sortable?.containerId;
-    const target = over.data.current?.sortable?.containerId ?? over.id;
-    if (!source || !target) return;
-
+    const src = active.data.current?.sortable?.containerId;
+    const tgt = over.data.current?.sortable?.containerId ?? over.id;
+    if (!src || !tgt) return;
     let updated = { ...tasksByColumn };
-
-    if (String(source) === String(target)) {
-      /* Same-column reorder */
-      const col = tasksByColumn[source] ?? [];
-      const oldIdx = col.findIndex((t) => t.task_id === active.id);
-      const newIdx = col.findIndex((t) => t.task_id === over.id);
-      if (oldIdx === -1 || newIdx === -1 || oldIdx === newIdx) return;
-      const reordered = arrayMove(col, oldIdx, newIdx);
-      updated = { ...tasksByColumn, [source]: reordered };
-      setTasksByColumn(updated);
+    if (String(src) === String(tgt)) {
+      const col = tasksByColumn[src] ?? [];
+      const oi = col.findIndex((t) => t.task_id === active.id),
+        ni = col.findIndex((t) => t.task_id === over.id);
+      if (oi === -1 || ni === -1 || oi === ni) return;
+      updated = { ...tasksByColumn, [src]: arrayMove(col, oi, ni) };
+      setTBC(updated);
     } else {
-      /* Cross-column move */
-      const srcTasks = [...(tasksByColumn[source] ?? [])];
-      const tgtTasks = [...(tasksByColumn[target] ?? [])];
-      const idx = srcTasks.findIndex((t) => t.task_id === active.id);
-      if (idx === -1) return;
-      const [moved] = srcTasks.splice(idx, 1);
-      tgtTasks.push({ ...moved, status_id: Number(target) });
-      updated = { ...tasksByColumn, [source]: srcTasks, [target]: tgtTasks };
-      setTasksByColumn(updated);
-
-      /* Persist status change immediately */
+      const s = [...(tasksByColumn[src] ?? [])],
+        t = [...(tasksByColumn[tgt] ?? [])];
+      const i = s.findIndex((x) => x.task_id === active.id);
+      if (i === -1) return;
+      const [mv] = s.splice(i, 1);
+      t.push({ ...mv, status_id: Number(tgt) });
+      updated = { ...tasksByColumn, [src]: s, [tgt]: t };
+      setTBC(updated);
       await apiFetch(`${API}/tasks/${active.id}/status`, "PUT", {
-        status_id: Number(target),
+        status_id: Number(tgt),
       });
     }
-
-    /* Persist every task's position so reloads restore the exact order */
     const payload = [];
-    for (const [colId, tasks] of Object.entries(updated)) {
+    for (const [cid, tasks] of Object.entries(updated))
       tasks.forEach((task, i) =>
         payload.push({
           task_id: task.task_id,
-          status_id: Number(colId),
+          status_id: Number(cid),
           position: i,
         }),
       );
-    }
     await apiFetch(`${API}/tasks/reorder`, "PUT", { tasks: payload });
   };
 
-  /* ── Task CRUD ────────────────────────────────────────────────────────── */
-
+  /* ── Task CRUD ──────────────────────────────────────────────────────────── */
   const openCreateTask = () => {
     setEditingTask(null);
-    setTaskTitle("");
-    setTaskDescription("");
-    setShowTaskModal(true);
+    setTTitle("");
+    setTDesc("");
+    setTPriority(false);
+    setShowTask(true);
   };
-
-  const openEditTask = (task) => {
-    setEditingTask(task);
-    setTaskTitle(task.title);
-    setTaskDescription(task.description ?? "");
-    setShowTaskModal(true);
+  const openEditTask = (t) => {
+    setEditingTask(t);
+    setTTitle(t.title);
+    setTDesc(t.description ?? "");
+    setTPriority(!!t.is_priority);
+    setShowTask(true);
   };
 
   const handleSaveTask = async () => {
-    if (!taskTitle.trim()) return;
-    if (editingTask) {
-      await apiFetch(`${API}/tasks/${editingTask.task_id}`, "PUT", {
-        title: taskTitle,
-        description: taskDescription,
-      });
-    } else {
-      const firstStageId = stages[0]?.status_id;
-      if (!firstStageId) return alert("Create at least one stage first.");
+    if (!tTitle.trim()) return;
+    setSavingTask(true);
+    try {
+      if (editingTask) {
+        await apiFetch(`${API}/tasks/${editingTask.task_id}`, "PUT", {
+          title: tTitle.trim(),
+          description: tDesc,
+          is_priority: tPriority,
+        });
+      } else {
+        // Find pending stage
+        const pendingStage =
+          stages.find(
+            (s) => !(s.is_completed === 1 || s.is_completed === true),
+          ) ?? stages[0];
+        if (!pendingStage) {
+          alert("Create at least one stage first.");
+          return;
+        }
+        await apiFetch(`${API}/tasks`, "POST", {
+          project_id: id,
+          status_id: pendingStage.status_id,
+          title: tTitle.trim(),
+          description: tDesc,
+          is_priority: tPriority,
+        });
+      }
+      await fetchTasks();
+      setShowTask(false);
+      setEditingTask(null);
+    } finally {
+      setSavingTask(false);
+    }
+  };
+
+  /* ── Subtasks ────────────────────────────────────────────────────────────── */
+  const openSubtasks = async (task) => {
+    setSubtaskParent(task);
+    setStTitle("");
+    setStDesc("");
+    setShowSubtask(true);
+    setLoadingST(true);
+    const d = await apiFetch(`${API}/tasks/${task.task_id}/subtasks`);
+    setSubtasks(Array.isArray(d) ? d : []);
+    setLoadingST(false);
+  };
+
+  const handleAddSubtask = async () => {
+    if (!stTitle.trim() || !subtaskParent) return;
+    setSavingST(true);
+    try {
       await apiFetch(`${API}/tasks`, "POST", {
         project_id: id,
-        status_id: firstStageId,
-        title: taskTitle,
-        description: taskDescription,
+        status_id: subtaskParent.status_id,
+        title: stTitle.trim(),
+        description: stDesc,
+        parent_task_id: subtaskParent.task_id,
       });
+      setStTitle("");
+      setStDesc("");
+      const d = await apiFetch(
+        `${API}/tasks/${subtaskParent.task_id}/subtasks`,
+      );
+      setSubtasks(Array.isArray(d) ? d : []);
+      // Update count in parent display
+      await fetchTasks();
+    } finally {
+      setSavingST(false);
     }
+  };
+
+  const handleDeleteSubtask = async (st) => {
+    await apiFetch(`${API}/tasks/${st.task_id}`, "DELETE");
+    const d = await apiFetch(`${API}/tasks/${subtaskParent.task_id}/subtasks`);
+    setSubtasks(Array.isArray(d) ? d : []);
     await fetchTasks();
-    setShowTaskModal(false);
-    setEditingTask(null);
-    setTaskTitle("");
-    setTaskDescription("");
   };
 
-  const handleMoveToNext = (task, currentStage) => {
-    const idx = stages.findIndex((s) => s.status_id === currentStage.status_id);
-    const nextStage = stages[idx + 1];
-    if (!nextStage) return;
-    setConfirmAction({
-      type: "move",
-      label: `Move "${task.title}" → "${nextStage.status_name}"?`,
-      extra: { task, nextStage },
+  const handleToggleSubtask = async (st) => {
+    const completedStage = stages.find(
+      (s) => s.is_completed === 1 || s.is_completed === true,
+    );
+    const firstStage = stages[0];
+    const isDone = String(st.status_id) === String(completedStage?.status_id);
+    const newStatusId = isDone
+      ? firstStage?.status_id
+      : (completedStage?.status_id ?? st.status_id);
+    await apiFetch(`${API}/tasks/${st.task_id}/status`, "PUT", {
+      status_id: newStatusId,
     });
+    const d = await apiFetch(`${API}/tasks/${subtaskParent.task_id}/subtasks`);
+    setSubtasks(Array.isArray(d) ? d : []);
   };
 
-  const handleDeleteTask = (task) => {
-    setConfirmAction({
-      type: "delete-task",
-      id: task.task_id,
-      label: `Delete task "${task.title}"? Cannot be undone.`,
+  /* ── Stage CRUD ─────────────────────────────────────────────────────────── */
+  const openCreateStage = () => {
+    setEditStage(null);
+    setSgName("");
+    setSgCompleted(false);
+    setSgPosition("");
+    setSgLimit("");
+    setShowStage(true);
+  };
+  const openEditStage = (s) => {
+    setEditStage(s);
+    setSgName(s.status_name);
+    setSgCompleted(s.is_completed === 1 || s.is_completed === true);
+    setSgPosition(String(s.order_number));
+    setSgLimit(s.task_limit != null ? String(s.task_limit) : "");
+    setShowStage(true);
+  };
+
+  const buildCreatePL = (isC) => ({
+    status_name: sgName.trim(),
+    order_number: sgCompleted
+      ? stages.length + 1
+      : sgPosition
+        ? Math.max(1, Math.min(Number(sgPosition), stages.length + 1))
+        : stages.length + 1,
+    is_completed: isC,
+    task_limit: sgLimit ? Number(sgLimit) : null,
+  });
+
+  const handleStageSubmit = () => {
+    if (!sgName.trim()) return;
+    const conflict = stages.find(
+      (s) =>
+        (s.is_completed === 1 || s.is_completed === true) &&
+        (!editStage || s.status_id !== editStage.status_id),
+    );
+    if (sgCompleted && conflict) {
+      setPendingPL(editStage ? null : buildCreatePL(true));
+      setPendingIsEdit(!!editStage);
+      setShowConflict(true);
+      return;
+    }
+    editStage
+      ? doEditStage(sgCompleted)
+      : doCreateStage(buildCreatePL(sgCompleted));
+  };
+
+  const doCreateStage = async (pl) => {
+    setSavingSg(true);
+    try {
+      const res = await apiFetch(
+        `${API}/projects/${id}/stages`,
+        "POST",
+        pl,
+        true,
+      );
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        alert(`Failed: ${e.error ?? res.status}`);
+        return;
+      }
+      setShowStage(false);
+      await fetchStages();
+    } finally {
+      setSavingSg(false);
+    }
+  };
+
+  const doEditStage = async (isC) => {
+    setSavingSg(true);
+    try {
+      const res = await apiFetch(
+        `${API}/projects/${id}/stages/${editStage.status_id}`,
+        "PUT",
+        {
+          status_name: sgName.trim(),
+          is_completed: isC,
+          task_limit: sgLimit ? Number(sgLimit) : null,
+        },
+        true,
+      );
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        alert(`Failed: ${e.error ?? res.status}`);
+        return;
+      }
+      setShowStage(false);
+      setEditStage(null);
+      await fetchStages();
+    } finally {
+      setSavingSg(false);
+    }
+  };
+
+  const handleReplaceCompleted = async () => {
+    const ex = stages.find(
+      (s) =>
+        (s.is_completed === 1 || s.is_completed === true) &&
+        (!editStage || s.status_id !== editStage.status_id),
+    );
+    if (ex)
+      await apiFetch(`${API}/projects/${id}/stages/${ex.status_id}`, "PUT", {
+        status_name: ex.status_name,
+        is_completed: false,
+        task_limit: ex.task_limit,
+      });
+    setShowConflict(false);
+    pendingIsEdit
+      ? await doEditStage(true)
+      : await doCreateStage(pendingPayload);
+    setPendingPL(null);
+  };
+  const handleKeepExisting = async () => {
+    setShowConflict(false);
+    pendingIsEdit
+      ? await doEditStage(false)
+      : await doCreateStage({ ...pendingPayload, is_completed: false });
+    setPendingPL(null);
+  };
+
+  const handleDeleteStage = (s) =>
+    setConfirm({
+      type: "delete-stage",
+      id: s.status_id,
+      label: `Delete stage "${s.status_name}"? Tasks inside become unassigned.`,
     });
+
+  /* ── Rearrange ───────────────────────────────────────────────────────────── */
+  const openRearrange = () => {
+    setRRList([...stages]);
+    setShowRearrange(true);
+  };
+  const handleRRDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    const oi = rrList.findIndex((s) => s.status_id === active.id),
+      ni = rrList.findIndex((s) => s.status_id === over.id);
+    setRRList(arrayMove(rrList, oi, ni));
+  };
+  const saveRearrange = async () => {
+    setSavingRR(true);
+    const pl = rrList.map((s, i) => ({
+      status_id: s.status_id,
+      order_number: i + 1,
+    }));
+    const res = await apiFetch(
+      `${API}/projects/${id}/stages/reorder`,
+      "PUT",
+      { stages: pl },
+      true,
+    );
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(`Failed: ${e.error ?? res.status}`);
+    }
+    setSavingRR(false);
+    setShowRearrange(false);
+    await fetchStages();
   };
 
+  /* ── Confirm ─────────────────────────────────────────────────────────────── */
   const handleConfirm = async () => {
-    const a = confirmAction;
-    setConfirmAction(null);
+    const a = confirm;
+    setConfirm(null);
     if (!a) return;
     if (a.type === "delete-task") {
       await apiFetch(`${API}/tasks/${a.id}`, "DELETE");
@@ -281,204 +519,40 @@ export default function Board() {
     }
   };
 
-  /* ── Stage CRUD ───────────────────────────────────────────────────────── */
-
-  const openCreateStage = () => {
-    setEditingStage(null);
-    setStageName("");
-    setStageIsCompleted(false);
-    setStagePosition("");
-    setStageTaskLimit("");
-    setShowStageModal(true);
-  };
-
-  const openEditStage = (stage) => {
-    setEditingStage(stage);
-    setStageName(stage.status_name);
-    setStageIsCompleted(
-      stage.is_completed === 1 || stage.is_completed === true,
-    );
-    setStagePosition(String(stage.order_number));
-    setStageTaskLimit(stage.task_limit != null ? String(stage.task_limit) : "");
-    setShowStageModal(true);
-  };
-
-  /* Build payload used only for CREATE */
-  const buildCreatePayload = (isCompleted) => {
-    const max = stages.length;
-    const position = isCompleted
-      ? max + 1
-      : stagePosition
-        ? Math.max(1, Math.min(Number(stagePosition), max + 1))
-        : max + 1;
-    return {
-      status_name: stageName.trim(),
-      order_number: position,
-      is_completed: isCompleted,
-      task_limit: stageTaskLimit ? Number(stageTaskLimit) : null,
-    };
-  };
-
-  /* Entry point when user clicks Save inside stage modal */
-  const handleStageSubmit = () => {
-    if (!stageName.trim()) return;
-
-    const conflictStage = stages.find(
-      (s) =>
-        (s.is_completed === 1 || s.is_completed === true) &&
-        (!editingStage || s.status_id !== editingStage.status_id),
-    );
-
-    if (stageIsCompleted && conflictStage) {
-      setPendingPayload(editingStage ? null : buildCreatePayload(true));
-      setPendingIsEdit(!!editingStage);
-      setShowConflict(true);
-      return;
-    }
-
-    if (editingStage) {
-      doEditStage(stageIsCompleted);
-    } else {
-      doCreateStage(buildCreatePayload(stageIsCompleted));
-    }
-  };
-
-  const doCreateStage = async (payload) => {
-    const res = await apiFetch(
-      `${API}/projects/${id}/stages`,
-      "POST",
-      payload,
-      true,
-    );
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`Create stage failed: ${err.error ?? res.status}`);
-      return;
-    }
-    setShowStageModal(false);
-    await fetchStages();
-  };
-
-  /* Edit only updates name, is_completed, task_limit */
-  const doEditStage = async (isCompleted) => {
-    const body = {
-      status_name: stageName.trim(),
-      is_completed: isCompleted,
-      task_limit: stageTaskLimit ? Number(stageTaskLimit) : null,
-    };
-    const res = await apiFetch(
-      `${API}/projects/${id}/stages/${editingStage.status_id}`,
-      "PUT",
-      body,
-      true,
-    );
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`Edit stage failed: ${err.error ?? res.status}`);
-      return;
-    }
-    setShowStageModal(false);
-    setEditingStage(null);
-    await fetchStages();
-  };
-
-  /* Conflict handlers */
-  const handleReplaceCompleted = async () => {
-    const existing = stages.find(
-      (s) =>
-        (s.is_completed === 1 || s.is_completed === true) &&
-        (!editingStage || s.status_id !== editingStage.status_id),
-    );
-    if (existing) {
-      await apiFetch(
-        `${API}/projects/${id}/stages/${existing.status_id}`,
-        "PUT",
-        {
-          status_name: existing.status_name,
-          is_completed: false,
-          task_limit: existing.task_limit,
-        },
-      );
-    }
-    setShowConflict(false);
-    if (pendingIsEdit) {
-      await doEditStage(true);
-    } else {
-      await doCreateStage(pendingPayload);
-    }
-    setPendingPayload(null);
-  };
-
-  const handleKeepExisting = async () => {
-    setShowConflict(false);
-    if (pendingIsEdit) {
-      await doEditStage(false);
-    } else {
-      await doCreateStage({ ...pendingPayload, is_completed: false });
-    }
-    setPendingPayload(null);
-  };
-
-  const handleDeleteStage = (stage) => {
-    setConfirmAction({
-      type: "delete-stage",
-      id: stage.status_id,
-      label: `Delete stage "${stage.status_name}"? Tasks inside will become unassigned.`,
+  const handleMoveToNext = (task, curStage) => {
+    const idx = stages.findIndex((s) => s.status_id === curStage.status_id);
+    const next = stages[idx + 1];
+    if (!next) return;
+    setConfirm({
+      type: "move",
+      label: `Move "${task.title}" → "${next.status_name}"?`,
+      extra: { task, nextStage: next },
     });
   };
+  const handleDeleteTask = (t) =>
+    setConfirm({
+      type: "delete-task",
+      id: t.task_id,
+      label: `Delete "${t.title}"? Cannot be undone.`,
+    });
 
-  /* ── Rearrange stages ─────────────────────────────────────────────────── */
-
-  const openRearrange = () => {
-    setRearrangeList([...stages]);
-    setShowRearrange(true);
-  };
-
-  const handleRearrangeDragEnd = ({ active, over }) => {
-    if (!over || active.id === over.id) return;
-    const oldIdx = rearrangeList.findIndex((s) => s.status_id === active.id);
-    const newIdx = rearrangeList.findIndex((s) => s.status_id === over.id);
-    setRearrangeList(arrayMove(rearrangeList, oldIdx, newIdx));
-  };
-
-  const saveRearrange = async () => {
-    setSavingRearrange(true);
-    const payload = rearrangeList.map((stage, i) => ({
-      status_id: stage.status_id,
-      order_number: i + 1,
-    }));
-    const res = await apiFetch(
-      `${API}/projects/${id}/stages/reorder`,
-      "PUT",
-      { stages: payload },
-      true,
-    );
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`Failed to save order: ${err.error ?? res.status}`);
-    }
-    setSavingRearrange(false);
-    setShowRearrange(false);
-    await fetchStages();
-  };
-
-  /* ── Render ───────────────────────────────────────────────────────────── */
-
+  /* ── Render ─────────────────────────────────────────────────────────────── */
   return (
     <div className="board-page">
-      {/* Navbar */}
       <nav className="navbar">
         <div className="navbar-left">
           <button className="nav-back-btn" onClick={() => navigate("/")}>
-            <span>←</span> Projects
+            ← Projects
           </button>
-          <span className="nav-separator" />
+          <span className="nav-sep" />
           <span className="nav-project-name">
-            {project?.project_name ?? "…"}
+            {project?.project_name ?? "Loading…"}
           </span>
         </div>
         <div className="navbar-center">
-          <span className="nav-logo">⬡ Kanban</span>
+          <div className="nav-logo">
+            <div className="nav-logo-icon">⬡</div>Kanban
+          </div>
         </div>
         <div className="navbar-right">
           <button
@@ -496,186 +570,145 @@ export default function Board() {
         </div>
       </nav>
 
-      {/* Board */}
       <div className="board-container">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          <div className="stages-wrapper">
-            {stages.map((stage) => (
-              <Column
-                key={stage.status_id}
-                stage={stage}
-                stages={stages}
-                tasks={tasksByColumn[stage.status_id] ?? []}
-                onEditTask={openEditTask}
-                onDeleteTask={handleDeleteTask}
-                onMoveToNext={handleMoveToNext}
-                onEditStage={openEditStage}
-                onDeleteStage={handleDeleteStage}
-                onRearrange={openRearrange}
-              />
-            ))}
-            {stages.length === 0 && (
-              <div className="empty-board">
-                <div className="empty-icon">📋</div>
-                <p>No stages yet. Create your first stage to get started.</p>
-                <button className="board-btn primary" onClick={openCreateStage}>
-                  + Create Stage
-                </button>
-              </div>
-            )}
+        {loading ? (
+          <div className="empty-board">
+            <div className="empty-icon">⏳</div>
+            <p>Loading board…</p>
           </div>
-
-          <DragOverlay>
-            {activeTask && (
-              <div className="task-card overlay">
-                <div className="task-title">{activeTask.title}</div>
-                {activeTask.description && (
-                  <div className="task-description">
-                    {activeTask.description}
-                  </div>
-                )}
-              </div>
-            )}
-          </DragOverlay>
-        </DndContext>
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="stages-wrapper">
+              {stages.length === 0 ? (
+                <div className="empty-board">
+                  <div className="empty-icon">📋</div>
+                  <p>No stages yet. Create your first stage to get started.</p>
+                  <button
+                    className="board-btn primary"
+                    style={{ marginTop: 8 }}
+                    onClick={openCreateStage}
+                  >
+                    + Create Stage
+                  </button>
+                </div>
+              ) : (
+                stages.map((stage) => (
+                  <Column
+                    key={stage.status_id}
+                    stage={stage}
+                    stages={stages}
+                    tasks={tasksByColumn[stage.status_id] ?? []}
+                    onEditTask={openEditTask}
+                    onDeleteTask={handleDeleteTask}
+                    onMoveToNext={handleMoveToNext}
+                    onSubtasks={openSubtasks}
+                    onEditStage={openEditStage}
+                    onDeleteStage={handleDeleteStage}
+                    onRearrange={openRearrange}
+                  />
+                ))
+              )}
+            </div>
+            <DragOverlay>
+              {activeTask ? (
+                <div
+                  className={`task-card overlay${activeTask.is_priority ? " task-priority" : ""}`}
+                >
+                  {activeTask.is_priority && (
+                    <div className="priority-banner">🔴 Priority</div>
+                  )}
+                  <div className="task-title">{activeTask.title}</div>
+                  {activeTask.description && (
+                    <div className="task-description">
+                      {activeTask.description}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        )}
       </div>
 
-      {/* ═══ Create / Edit Task ═══ */}
-      {showTaskModal && (
-        <Modal onClose={() => setShowTaskModal(false)}>
-          <h2 className="modal-title">
-            {editingTask ? "Edit Task" : "Create Task"}
-          </h2>
-          <label className="modal-label">Title</label>
-          <input
-            className="modal-input"
-            value={taskTitle}
-            onChange={(e) => setTaskTitle(e.target.value)}
-            placeholder="Task title"
-            autoFocus
-          />
-          <label className="modal-label">
-            Description <span className="modal-optional">(optional)</span>
-          </label>
-          <textarea
-            className="modal-textarea"
-            value={taskDescription}
-            onChange={(e) => setTaskDescription(e.target.value)}
-            placeholder="Add a description…"
-            rows={4}
-          />
-          <div className="modal-actions">
-            <button className="board-btn primary" onClick={handleSaveTask}>
-              {editingTask ? "Save Changes" : "Create Task"}
-            </button>
-            <button
-              className="board-btn secondary"
-              onClick={() => setShowTaskModal(false)}
-            >
-              Cancel
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      {/* ═══ Create / Edit Stage ═══ */}
-      {showStageModal && (
+      {/* ═══ Create/Edit Task ═══ */}
+      {showTask && (
         <Modal
           onClose={() => {
-            setShowStageModal(false);
-            setEditingStage(null);
+            setShowTask(false);
+            setEditingTask(null);
           }}
         >
           <h2 className="modal-title">
-            {editingStage ? "Edit Stage" : "Create Stage"}
+            {editingTask ? "Edit Task" : "New Task"}
           </h2>
 
-          <label className="modal-label">Stage Name</label>
+          <label className="modal-label">
+            Title <span style={{ color: "#ef4444" }}>*</span>
+          </label>
           <input
             className="modal-input"
-            value={stageName}
-            onChange={(e) => setStageName(e.target.value)}
-            placeholder="e.g. In Review"
+            value={tTitle}
+            onChange={(e) => setTTitle(e.target.value)}
+            placeholder="e.g. Design landing page"
             autoFocus
+            onKeyDown={(e) => e.key === "Enter" && handleSaveTask()}
           />
 
           <label className="modal-label">
-            Task Limit{" "}
-            <span className="modal-optional">(leave blank for unlimited)</span>
+            Description <span className="modal-opt">(optional)</span>
           </label>
-          <input
-            className="modal-input"
-            type="number"
-            min="1"
-            value={stageTaskLimit}
-            onChange={(e) => setStageTaskLimit(e.target.value)}
-            placeholder="e.g. 5"
+          <textarea
+            className="modal-textarea"
+            value={tDesc}
+            onChange={(e) => setTDesc(e.target.value)}
+            placeholder="Add more details…"
+            rows={4}
           />
 
-          <label className="modal-label">
-            Is this a final / completed stage?
-          </label>
-          <div className="toggle-row">
+          {/* Priority toggle */}
+          <div className="priority-toggle-wrap">
             <button
-              className={`toggle-btn ${stageIsCompleted ? "active" : ""}`}
-              onClick={() => setStageIsCompleted(true)}
+              className={`priority-toggle ${tPriority ? "priority-toggle-on" : ""}`}
+              onClick={() => setTPriority((p) => !p)}
+              type="button"
             >
-              ✅ Yes — place at end
+              <span className="pt-icon">🔴</span>
+              <span className="pt-label">
+                {tPriority ? "Priority / Urgent" : "Mark as Priority"}
+              </span>
+              <span className={`pt-pill ${tPriority ? "on" : ""}`}>
+                {tPriority ? "ON" : "OFF"}
+              </span>
             </button>
-            <button
-              className={`toggle-btn ${!stageIsCompleted ? "active" : ""}`}
-              onClick={() => setStageIsCompleted(false)}
-            >
-              🔢 No — set position
-            </button>
+            {tPriority && (
+              <p className="priority-hint">
+                This task will be highlighted in red on the board.
+              </p>
+            )}
           </div>
 
-          {!stageIsCompleted && !editingStage && (
-            <div style={{ marginTop: 14 }}>
-              <label className="modal-label">
-                Position{" "}
-                <span className="modal-optional">
-                  (1 = first · blank = last · max: {stages.length + 1})
-                </span>
-              </label>
-              <input
-                className="modal-input"
-                type="number"
-                min="1"
-                max={stages.length + 1}
-                value={stagePosition}
-                onChange={(e) => setStagePosition(e.target.value)}
-                placeholder={`1 – ${stages.length + 1}`}
-              />
-              {stagePosition && (
-                <p className="modal-hint">
-                  Will be inserted at position {stagePosition}. Others shift
-                  right.
-                </p>
-              )}
-            </div>
-          )}
-
-          {stageIsCompleted && (
-            <p className="modal-hint completed-hint">
-              This stage will be placed last and marked as ✅ final.
-            </p>
-          )}
-
           <div className="modal-actions" style={{ marginTop: 20 }}>
-            <button className="board-btn primary" onClick={handleStageSubmit}>
-              {editingStage ? "Save Changes" : "Create Stage"}
+            <button
+              className="board-btn primary"
+              onClick={handleSaveTask}
+              disabled={!tTitle.trim() || savingTask}
+            >
+              {savingTask
+                ? "Saving…"
+                : editingTask
+                  ? "Save Changes"
+                  : "Create Task"}
             </button>
             <button
               className="board-btn secondary"
               onClick={() => {
-                setShowStageModal(false);
-                setEditingStage(null);
+                setShowTask(false);
+                setEditingTask(null);
               }}
             >
               Cancel
@@ -684,15 +717,264 @@ export default function Board() {
         </Modal>
       )}
 
-      {/* ═══ Completed Stage Conflict ═══ */}
+      {/* ═══ Subtasks Modal ═══ */}
+      {showSubtask && subtaskParent && (
+        <Modal
+          onClose={() => {
+            setShowSubtask(false);
+            setSubtaskParent(null);
+            setSubtasks([]);
+          }}
+        >
+          <h2 className="modal-title">
+            {subtaskParent.is_priority && (
+              <span style={{ marginRight: 6 }}>🔴</span>
+            )}
+            Subtasks
+          </h2>
+          <p className="modal-parent-title">
+            Parent: <strong>{subtaskParent.title}</strong>
+          </p>
+
+          {/* Add subtask form */}
+          <div className="subtask-add-form">
+            <input
+              className="modal-input"
+              style={{ marginBottom: 8 }}
+              value={stTitle}
+              onChange={(e) => setStTitle(e.target.value)}
+              placeholder="Subtask title…"
+              onKeyDown={(e) => e.key === "Enter" && handleAddSubtask()}
+            />
+            <input
+              className="modal-input"
+              value={stDesc}
+              onChange={(e) => setStDesc(e.target.value)}
+              placeholder="Description (optional)"
+            />
+            <button
+              className="board-btn primary"
+              onClick={handleAddSubtask}
+              disabled={!stTitle.trim() || savingST}
+              style={{ marginTop: 4 }}
+            >
+              {savingST ? "Adding…" : "+ Add Subtask"}
+            </button>
+          </div>
+
+          {/* Subtask list */}
+          <div className="subtask-list">
+            {loadingST && (
+              <p
+                style={{
+                  color: "#9ca3af",
+                  fontSize: 13,
+                  textAlign: "center",
+                  padding: "12px 0",
+                }}
+              >
+                Loading…
+              </p>
+            )}
+            {!loadingST && subtasks.length === 0 && (
+              <p
+                style={{
+                  color: "#9ca3af",
+                  fontSize: 13,
+                  textAlign: "center",
+                  padding: "12px 0",
+                }}
+              >
+                No subtasks yet.
+              </p>
+            )}
+            {subtasks.map((st) => {
+              const completedStage = stages.find(
+                (s) => s.is_completed === 1 || s.is_completed === true,
+              );
+              const isDone =
+                completedStage &&
+                String(st.status_id) === String(completedStage.status_id);
+              return (
+                <div
+                  key={st.task_id}
+                  className={`subtask-item ${isDone ? "subtask-done" : ""}`}
+                >
+                  <button
+                    className={`subtask-check ${isDone ? "checked" : ""}`}
+                    onClick={() => handleToggleSubtask(st)}
+                    title={isDone ? "Mark undone" : "Mark done"}
+                  >
+                    {isDone ? "✓" : ""}
+                  </button>
+                  <div className="subtask-text">
+                    <span className="subtask-title">{st.title}</span>
+                    {st.description && (
+                      <span className="subtask-desc">{st.description}</span>
+                    )}
+                  </div>
+                  <button
+                    className="subtask-del"
+                    onClick={() => handleDeleteSubtask(st)}
+                    title="Delete"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {subtasks.length > 0 && (
+            <div className="subtask-progress">
+              <div className="subtask-prog-bar">
+                <div
+                  className="subtask-prog-fill"
+                  style={{
+                    width: `${Math.round(
+                      (subtasks.filter((s) => {
+                        const cs = stages.find(
+                          (x) =>
+                            x.is_completed === 1 || x.is_completed === true,
+                        );
+                        return (
+                          cs && String(s.status_id) === String(cs.status_id)
+                        );
+                      }).length /
+                        subtasks.length) *
+                        100,
+                    )}%`,
+                  }}
+                />
+              </div>
+              <span className="subtask-prog-label">
+                {
+                  subtasks.filter((s) => {
+                    const cs = stages.find(
+                      (x) => x.is_completed === 1 || x.is_completed === true,
+                    );
+                    return cs && String(s.status_id) === String(cs.status_id);
+                  }).length
+                }{" "}
+                / {subtasks.length} done
+              </span>
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* ═══ Create/Edit Stage ═══ */}
+      {showStage && (
+        <Modal
+          onClose={() => {
+            setShowStage(false);
+            setEditStage(null);
+          }}
+        >
+          <h2 className="modal-title">
+            {editStage ? "Edit Stage" : "New Stage"}
+          </h2>
+          <label className="modal-label">
+            Stage Name <span style={{ color: "#ef4444" }}>*</span>
+          </label>
+          <input
+            className="modal-input"
+            value={sgName}
+            onChange={(e) => setSgName(e.target.value)}
+            placeholder="e.g. In Review"
+            autoFocus
+          />
+          <label className="modal-label">
+            Task Limit <span className="modal-opt">(blank = unlimited)</span>
+          </label>
+          <input
+            className="modal-input"
+            type="number"
+            min="1"
+            value={sgLimit}
+            onChange={(e) => setSgLimit(e.target.value)}
+            placeholder="e.g. 5"
+          />
+          <label className="modal-label">
+            Is this a final / completed stage?
+          </label>
+          <div className="toggle-row">
+            <button
+              className={`toggle-btn ${sgCompleted ? "active" : ""}`}
+              onClick={() => setSgCompleted(true)}
+            >
+              ✅ Yes — final
+            </button>
+            <button
+              className={`toggle-btn ${!sgCompleted ? "active" : ""}`}
+              onClick={() => setSgCompleted(false)}
+            >
+              🔢 No — set position
+            </button>
+          </div>
+          {!sgCompleted && !editStage && (
+            <div style={{ marginTop: 16 }}>
+              <label className="modal-label">
+                Position{" "}
+                <span className="modal-opt">
+                  (blank = last · max {stages.length + 1})
+                </span>
+              </label>
+              <input
+                className="modal-input"
+                type="number"
+                min="1"
+                max={stages.length + 1}
+                value={sgPosition}
+                onChange={(e) => setSgPosition(e.target.value)}
+                placeholder={`1–${stages.length + 1}`}
+              />
+              {sgPosition && (
+                <p className="modal-hint">
+                  Inserted at position {sgPosition}. Others shift right.
+                </p>
+              )}
+            </div>
+          )}
+          {sgCompleted && (
+            <p className="modal-hint completed-hint">
+              This stage will be placed last and marked ✅ final.
+            </p>
+          )}
+          <div className="modal-actions" style={{ marginTop: 22 }}>
+            <button
+              className="board-btn primary"
+              onClick={handleStageSubmit}
+              disabled={!sgName.trim() || savingSg}
+            >
+              {savingSg
+                ? "Saving…"
+                : editStage
+                  ? "Save Changes"
+                  : "Create Stage"}
+            </button>
+            <button
+              className="board-btn secondary"
+              onClick={() => {
+                setShowStage(false);
+                setEditStage(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ═══ Conflict ═══ */}
       {showConflict && (
         <Modal
           onClose={() => {
             setShowConflict(false);
-            setPendingPayload(null);
+            setPendingPL(null);
           }}
         >
-          <div className="conflict-icon">⚠️</div>
+          <span className="conflict-icon">⚠️</span>
           <h2 className="modal-title">Completed Stage Already Exists</h2>
           <p className="modal-body-text">
             <strong>
@@ -701,19 +983,19 @@ export default function Board() {
                 stages.find(
                   (s) =>
                     (s.is_completed === 1 || s.is_completed === true) &&
-                    (!editingStage || s.status_id !== editingStage.status_id),
+                    (!editStage || s.status_id !== editStage.status_id),
                 )?.status_name
               }
               "
             </strong>{" "}
-            is already the final stage. What would you like to do?
+            is already the final stage.
           </p>
           <div className="modal-actions column-actions">
             <button
               className="board-btn primary"
               onClick={handleReplaceCompleted}
             >
-              Replace — make "{stageName}" the final stage
+              Replace — make "{sgName}" the final stage
             </button>
             <button
               className="board-btn secondary"
@@ -725,7 +1007,7 @@ export default function Board() {
               className="board-btn ghost"
               onClick={() => {
                 setShowConflict(false);
-                setPendingPayload(null);
+                setPendingPL(null);
               }}
             >
               Cancel
@@ -734,7 +1016,7 @@ export default function Board() {
         </Modal>
       )}
 
-      {/* ═══ Rearrange Stages ═══ */}
+      {/* ═══ Rearrange ═══ */}
       {showRearrange && (
         <Modal onClose={() => setShowRearrange(false)}>
           <h2 className="modal-title">Rearrange Stages</h2>
@@ -742,16 +1024,16 @@ export default function Board() {
             Drag stages into your preferred order, then save.
           </p>
           <DndContext
-            sensors={rearrangeSensors}
+            sensors={rrSensors}
             collisionDetection={closestCenter}
-            onDragEnd={handleRearrangeDragEnd}
+            onDragEnd={handleRRDragEnd}
           >
             <SortableContext
-              items={rearrangeList.map((s) => s.status_id)}
+              items={rrList.map((s) => s.status_id)}
               strategy={verticalListSortingStrategy}
             >
               <div className="rearrange-list">
-                {rearrangeList.map((stage, idx) => (
+                {rrList.map((stage, idx) => (
                   <div key={stage.status_id} className="rearrange-row">
                     <span className="rearrange-num">{idx + 1}</span>
                     <SortableStage stage={stage} />
@@ -760,13 +1042,13 @@ export default function Board() {
               </div>
             </SortableContext>
           </DndContext>
-          <div className="modal-actions" style={{ marginTop: 20 }}>
+          <div className="modal-actions" style={{ marginTop: 22 }}>
             <button
               className="board-btn primary"
               onClick={saveRearrange}
-              disabled={savingRearrange}
+              disabled={savingRR}
             >
-              {savingRearrange ? "Saving…" : "Save Order"}
+              {savingRR ? "Saving…" : "Save Order"}
             </button>
             <button
               className="board-btn secondary"
@@ -778,26 +1060,26 @@ export default function Board() {
         </Modal>
       )}
 
-      {/* ═══ Generic Confirm ═══ */}
-      {confirmAction && (
-        <Modal onClose={() => setConfirmAction(null)}>
-          <div className="conflict-icon">
-            {confirmAction.type === "move" ? "➡️" : "🗑️"}
-          </div>
+      {/* ═══ Confirm ═══ */}
+      {confirm && (
+        <Modal onClose={() => setConfirm(null)}>
+          <span className="conflict-icon">
+            {confirm.type === "move" ? "➡️" : "🗑️"}
+          </span>
           <h2 className="modal-title">
-            {confirmAction.type === "move" ? "Move Task" : "Confirm Delete"}
+            {confirm.type === "move" ? "Move Task" : "Confirm Delete"}
           </h2>
-          <p className="modal-body-text">{confirmAction.label}</p>
+          <p className="modal-body-text">{confirm.label}</p>
           <div className="modal-actions">
             <button
-              className={`board-btn ${confirmAction.type === "move" ? "primary" : "danger-btn"}`}
+              className={`board-btn ${confirm.type === "move" ? "primary" : "danger-btn"}`}
               onClick={handleConfirm}
             >
-              {confirmAction.type === "move" ? "Yes, Move" : "Delete"}
+              {confirm.type === "move" ? "Yes, Move" : "Delete"}
             </button>
             <button
               className="board-btn secondary"
-              onClick={() => setConfirmAction(null)}
+              onClick={() => setConfirm(null)}
             >
               Cancel
             </button>
@@ -808,7 +1090,7 @@ export default function Board() {
   );
 }
 
-/* ─── Column ─────────────────────────────────────────────────────────────────*/
+/* ── Column ──────────────────────────────────────────────────────────────── */
 function Column({
   stage,
   stages,
@@ -816,23 +1098,22 @@ function Column({
   onEditTask,
   onDeleteTask,
   onMoveToNext,
+  onSubtasks,
   onEditStage,
   onDeleteStage,
   onRearrange,
 }) {
   const { setNodeRef } = useDroppable({ id: stage.status_id });
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef(null);
-
-  const isLastStage = stages[stages.length - 1]?.status_id === stage.status_id;
+  const [ddOpen, setDDOpen] = useState(false);
+  const ddRef = useRef(null);
+  const isCompleted = stage.is_completed === 1 || stage.is_completed === true;
   const taskLimit = stage.task_limit ?? null;
   const isOver = taskLimit !== null && tasks.length > taskLimit;
   const isAt = taskLimit !== null && tasks.length === taskLimit;
 
   useEffect(() => {
     const h = (e) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target))
-        setDropdownOpen(false);
+      if (ddRef.current && !ddRef.current.contains(e.target)) setDDOpen(false);
     };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
@@ -841,8 +1122,7 @@ function Column({
   let cls = "column";
   if (isOver) cls += " column-overlimit";
   else if (isAt) cls += " column-atlimit";
-  if (stage.is_completed === 1 || stage.is_completed === true)
-    cls += " column-completed";
+  if (isCompleted) cls += " column-completed";
 
   return (
     <div ref={setNodeRef} className={cls}>
@@ -850,7 +1130,7 @@ function Column({
         <div className="column-title-row">
           <h3 className="column-title">{stage.status_name}</h3>
           <div className="column-badges">
-            {(stage.is_completed === 1 || stage.is_completed === true) && (
+            {isCompleted && (
               <span className="stage-badge completed-badge">✓ Final</span>
             )}
             <span
@@ -861,19 +1141,18 @@ function Column({
             </span>
           </div>
         </div>
-
-        <div style={{ position: "relative" }} ref={dropdownRef}>
+        <div style={{ position: "relative" }} ref={ddRef}>
           <button
             className="column-menu-btn"
-            onClick={() => setDropdownOpen((o) => !o)}
+            onClick={() => setDDOpen((o) => !o)}
           >
             ⋯
           </button>
-          {dropdownOpen && (
+          {ddOpen && (
             <div className="column-dropdown">
               <div
                 onClick={() => {
-                  setDropdownOpen(false);
+                  setDDOpen(false);
                   onEditStage(stage);
                 }}
               >
@@ -881,7 +1160,7 @@ function Column({
               </div>
               <div
                 onClick={() => {
-                  setDropdownOpen(false);
+                  setDDOpen(false);
                   onRearrange();
                 }}
               >
@@ -891,7 +1170,7 @@ function Column({
               <div
                 className="danger"
                 onClick={() => {
-                  setDropdownOpen(false);
+                  setDDOpen(false);
                   onDeleteStage(stage);
                 }}
               >
@@ -925,10 +1204,14 @@ function Column({
               key={task.task_id}
               task={task}
               stage={stage}
-              isLastStage={isLastStage}
+              isLastStage={
+                stages[stages.length - 1]?.status_id === stage.status_id
+              }
+              stages={stages}
               onEdit={onEditTask}
               onDelete={onDeleteTask}
               onMoveToNext={onMoveToNext}
+              onSubtasks={onSubtasks}
             />
           ))}
           {tasks.length === 0 && (
@@ -940,14 +1223,16 @@ function Column({
   );
 }
 
-/* ─── TaskCard ───────────────────────────────────────────────────────────────*/
+/* ── TaskCard ────────────────────────────────────────────────────────────── */
 function TaskCard({
   task,
   stage,
   isLastStage,
+  stages,
   onEdit,
   onDelete,
   onMoveToNext,
+  onSubtasks,
 }) {
   const {
     attributes,
@@ -959,12 +1244,7 @@ function TaskCard({
   } = useSortable({ id: task.task_id });
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
-  };
+  const isPriority = task.is_priority === 1 || task.is_priority === true;
 
   useEffect(() => {
     const h = (e) => {
@@ -975,15 +1255,23 @@ function TaskCard({
     return () => document.removeEventListener("mousedown", h);
   }, []);
 
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.3 : 1,
+  };
+
   return (
-    <div ref={setNodeRef} style={style} className="task-card">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`task-card${isPriority ? " task-priority" : ""}`}
+    >
+      {isPriority && (
+        <div className="priority-banner">🔴 Priority / Urgent</div>
+      )}
       <div className="task-header">
-        <div
-          {...listeners}
-          {...attributes}
-          className="task-drag"
-          title="Drag to move"
-        >
+        <div {...listeners} {...attributes} className="task-drag" title="Drag">
           ⠿
         </div>
         <div style={{ position: "relative" }} ref={menuRef}>
@@ -1003,6 +1291,14 @@ function TaskCard({
               >
                 ✏️ Edit
               </div>
+              <div
+                onClick={() => {
+                  setMenuOpen(false);
+                  onSubtasks(task);
+                }}
+              >
+                📋 Subtasks
+              </div>
               {!isLastStage && (
                 <div
                   onClick={() => {
@@ -1010,7 +1306,7 @@ function TaskCard({
                     onMoveToNext(task, stage);
                   }}
                 >
-                  ➡️ Move to Next Stage
+                  ➡️ Move to Next
                 </div>
               )}
               <div className="divider" />
@@ -1033,19 +1329,4 @@ function TaskCard({
       )}
     </div>
   );
-}
-
-/* ─── Shared fetch helper ────────────────────────────────────────────────────*/
-function apiFetch(url, method = "GET", body, returnRaw = false) {
-  const opts = { method, headers: { "Content-Type": "application/json" } };
-  if (body) opts.body = JSON.stringify(body);
-  const promise = fetch(url, opts);
-  return returnRaw
-    ? promise
-    : promise
-        .then((r) => r.json())
-        .catch((e) => {
-          console.error(url, e);
-          return {};
-        });
 }
