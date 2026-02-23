@@ -1,0 +1,188 @@
+/* ================= BOARD ================= */
+
+.board-container {
+  padding: 24px;
+  background-color: #f4f6f8;
+  min-height: 100vh;
+}
+
+.board-title {
+  font-size: 26px;
+  font-weight: 600;
+  margin-bottom: 20px;
+}
+
+/* ================= BUTTONS ================= */
+
+.board-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.board-btn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+  transition: 0.2s ease;
+}
+
+.board-btn.primary {
+  background-color: #2563eb;
+  color: white;
+}
+
+.board-btn.primary:hover {
+  background-color: #1e4ed8;
+}
+
+.board-btn.secondary {
+  background-color: #e5e7eb;
+}
+
+.board-btn.secondary:hover {
+  background-color: #d1d5db;
+}
+
+/* ================= STAGES WRAPPER ================= */
+
+.stages-wrapper {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  align-items: flex-start;
+  padding-bottom: 10px;
+  scroll-behavior: smooth;
+}
+
+.stages-wrapper::-webkit-scrollbar {
+  height: 8px;
+}
+
+.stages-wrapper::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+/* ================= COLUMN ================= */
+
+.column {
+  width: 300px;
+  min-width: 300px;
+  flex-shrink: 0;
+  background-color: #ffffff;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
+.column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.column-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.column-menu-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+}
+
+/* Dropdown */
+
+.column-dropdown {
+  position: absolute;
+  right: 0;
+  background: white;
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  z-index: 100;
+  width: 160px;
+}
+
+.column-dropdown div {
+  padding: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  border-radius: 4px;
+}
+
+.column-dropdown div:hover {
+  background-color: #f3f4f6;
+}
+
+.column-dropdown .danger {
+  color: red;
+}
+
+/* ================= TASK ================= */
+
+.task-card {
+  background-color: #f9fafb;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  transition: 0.2s ease;
+}
+
+.task-card:hover {
+  background-color: #f3f4f6;
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.task-drag {
+  cursor: grab;
+}
+
+.task-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.task-description {
+  font-size: 13px;
+  color: #555;
+}
+
+.stages-wrapper {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  align-items: flex-start;
+  padding-bottom: 10px;
+}
+
+.column {
+  width: 300px;
+  min-width: 300px;
+  flex-shrink: 0;
+  background: white;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+
+.task-card.overlay {
+  width: 260px;
+  background: white;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+}
