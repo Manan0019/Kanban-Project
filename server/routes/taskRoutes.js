@@ -1,134 +1,105 @@
 const express = require("express");
-const router = express.Router();
-const db = require("../config/db");
+const router  = express.Router();
+const db      = require("../config/db");
 
-// CREATE TASK
+/* ================================================================
+   IMPORTANT: /reorder must be registered BEFORE  /:taskId
+   otherwise Express matches the literal string "reorder" as
+   a taskId param and the route is never reached.
+   ================================================================ */
+
+// POST  create task
 router.post("/", (req, res) => {
   const { project_id, status_id, title, description } = req.body;
 
-  const insertQuery = `
-    INSERT INTO task (project_id, status_id, title, description)
-    VALUES (?, ?, ?, ?)
-  `;
-
+  // New tasks get position = (count of tasks in that column)
   db.query(
-    insertQuery,
-    [project_id, status_id, title, description],
-    (err, result) => {
+    "SELECT COUNT(*) AS cnt FROM task WHERE status_id = ?",
+    [status_id],
+    (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
+      const position = rows[0].cnt;   // 0-based, appended at end
 
-      const newTaskId = result.insertId;
-
-      const selectQuery = `
-        SELECT * FROM task WHERE task_id = ?
-      `;
-
-      db.query(selectQuery, [newTaskId], (err2, rows) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-
-        res.status(201).json(rows[0]); // return full task object
-      });
+      db.query(
+        "INSERT INTO task (project_id, status_id, title, description, position) VALUES (?, ?, ?, ?, ?)",
+        [project_id, status_id, title, description, position],
+        (err2, result) => {
+          if (err2) return res.status(500).json({ error: err2.message });
+          db.query("SELECT * FROM task WHERE task_id = ?", [result.insertId], (err3, r) => {
+            if (err3) return res.status(500).json({ error: err3.message });
+            res.status(201).json(r[0]);
+          });
+        }
+      );
     }
   );
 });
 
-// GET TASKS BY PROJECT
+// GET  tasks by project  — ordered by position so reload restores sequence
 router.get("/project/:projectId", (req, res) => {
-    const { projectId } = req.params;
-
-    const query = `
-        SELECT * FROM task
-        WHERE project_id = ?
-        ORDER BY status_id, position ASC
-    `;
-
-    db.query(query, [projectId], (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-
-        res.json(results);
-    });
+  db.query(
+    "SELECT * FROM task WHERE project_id = ? ORDER BY status_id ASC, COALESCE(position,0) ASC",
+    [req.params.projectId],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
 });
 
-// UPDATE TASK STATUS
-router.put("/:taskId/status", (req, res) => {
-    const { taskId } = req.params;
-    const { status_id } = req.body;
-
-    const query = `
-        UPDATE task
-        SET status_id = ?
-        WHERE task_id = ?
-    `;
-
-    db.query(query, [status_id, taskId], (err, result) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-
-        res.json({ message: "Task status updated successfully" });
-    });
-});
-
-// DELETE TASK
-router.delete("/:taskId", (req, res) => {
-    const { taskId } = req.params;
-
-    const query = `
-        DELETE FROM task
-        WHERE task_id = ?
-    `;
-
-    db.query(query, [taskId], (err, result) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-
-        res.json({ message: "Task deleted successfully" });
-    });
-});
-
-// UPDATE TASK
-router.put("/:taskId", (req, res) => {
-    const { taskId } = req.params;
-    const { title, description } = req.body;
-
-    const query = `
-        UPDATE task
-        SET title = ?, description = ?
-        WHERE task_id = ?
-    `;
-
-    db.query(query, [title, description, taskId], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        res.json({ message: "Task updated successfully" });
-    });
-});
-
-// UPDATE TASK POSITION + STATUS
+// PUT  /tasks/reorder   — bulk update position+status_id for all tasks
+// *** MUST come before  /:taskId  ***
 router.put("/reorder", (req, res) => {
-    const { tasks } = req.body;
+  const { tasks } = req.body;
+  if (!tasks || !tasks.length) return res.json({ message: "Nothing to reorder" });
 
-    const updatePromises = tasks.map((task) => {
-        return new Promise((resolve, reject) => {
-            const query = `
-                UPDATE task
-                SET status_id = ?, position = ?
-                WHERE task_id = ?
-            `;
+  const promises = tasks.map(({ task_id, status_id, position }) =>
+    new Promise((resolve, reject) => {
+      db.query(
+        "UPDATE task SET status_id = ?, position = ? WHERE task_id = ?",
+        [status_id, position, task_id],
+        (err) => (err ? reject(err) : resolve())
+      );
+    })
+  );
 
-            db.query(query, [task.status_id, task.position, task.task_id], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-    });
+  Promise.all(promises)
+    .then(() => res.json({ message: "Tasks reordered" }))
+    .catch((err) => res.status(500).json({ error: err.message }));
+});
 
-    Promise.all(updatePromises)
-        .then(() => res.json({ message: "Tasks reordered successfully" }))
-        .catch((err) => res.status(500).json({ error: err.message }));
+// PUT  /tasks/:taskId/status
+router.put("/:taskId/status", (req, res) => {
+  const { status_id } = req.body;
+  db.query(
+    "UPDATE task SET status_id = ? WHERE task_id = ?",
+    [status_id, req.params.taskId],
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: "Status updated" });
+    }
+  );
+});
+
+// PUT  /tasks/:taskId   — edit title & description
+router.put("/:taskId", (req, res) => {
+  const { title, description } = req.body;
+  db.query(
+    "UPDATE task SET title = ?, description = ? WHERE task_id = ?",
+    [title, description, req.params.taskId],
+    (err) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: "Task updated" });
+    }
+  );
+});
+
+// DELETE  /tasks/:taskId
+router.delete("/:taskId", (req, res) => {
+  db.query("DELETE FROM task WHERE task_id = ?", [req.params.taskId], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: "Task deleted" });
+  });
 });
 
 module.exports = router;
