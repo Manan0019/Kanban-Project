@@ -8,7 +8,7 @@ const db      = require("../config/db");
 
 // GET all projects
 router.get("/", (req, res) => {
-  db.query("SELECT * FROM project ORDER BY created_at DESC", (err, rows) => {
+  db.query("SELECT * FROM projects ORDER BY created_at DESC", (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
@@ -22,26 +22,26 @@ router.post("/", (req, res) => {
   }
 
   db.query(
-    "INSERT INTO project (project_name, description, start_date, end_date) VALUES (?, ?, ?, ?)",
+    "INSERT INTO projects (name, description, start_date, end_date) VALUES (?, ?, ?, ?)",
     [project_name.trim(), description || "", start_date || null, end_date || null],
     (err, result) => {
       if (err) return res.status(500).json({ error: err.message });
       const pid = result.insertId;
 
       const stageRows = (stages && stages.length > 0) ? stages : [
-        { status_name: "Pending",     is_completed: 0, task_limit: null },
-        { status_name: "In Progress", is_completed: 0, task_limit: null },
-        { status_name: "Completed",   is_completed: 1, task_limit: null },
+        { status_name: "Pending",     is_pending: 1, is_completed: 0, task_limit: null },
+        { status_name: "In Progress", is_pending: 0, is_completed: 0, task_limit: null },
+        { status_name: "Completed",   is_pending: 0, is_completed: 1, task_limit: null },
       ];
 
       const values = stageRows.map((s, i) => [
-        pid, s.status_name, i + 1, s.is_completed ? 1 : 0, s.task_limit || null,
+        pid, s.status_name, i + 1, s.is_completed ? 1 : 0, s.task_limit || null, s.is_pending ? 1 : 0,
       ]);
-      const placeholders = values.map(() => "(?,?,?,?,?)").join(",");
+      const placeholders = values.map(() => "(?,?,?,?,?,?)").join(",");
       const flat = values.flat();
 
       db.query(
-        `INSERT INTO project_status (project_id, status_name, order_number, is_completed, task_limit) VALUES ${placeholders}`,
+        `INSERT INTO stages (project_id, name, position, is_completed, task_limit, is_pending) VALUES ${placeholders}`,
         flat,
         (err2) => {
           if (err2) return res.status(500).json({ error: err2.message });
@@ -58,8 +58,8 @@ router.put("/:projectId", (req, res) => {
   const fields = [];
   const values = [];
 
-  if (project_name !== undefined) { fields.push("project_name = ?"); values.push(project_name.trim()); }
-  if (description  !== undefined) { fields.push("description = ?");  values.push(description); }
+  if (project_name !== undefined) { fields.push("name = ?");        values.push(project_name.trim()); }
+  if (description  !== undefined) { fields.push("description = ?"); values.push(description); }
   if (start_date   !== undefined) { fields.push("start_date = ?");   values.push(start_date || null); }
   if (end_date     !== undefined) { fields.push("end_date = ?");     values.push(end_date || null); }
 
@@ -67,7 +67,7 @@ router.put("/:projectId", (req, res) => {
   values.push(req.params.projectId);
 
   db.query(
-    `UPDATE project SET ${fields.join(", ")} WHERE project_id = ?`,
+    `UPDATE projects SET ${fields.join(", ")} WHERE id = ?`,
     values,
     (err) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -76,14 +76,14 @@ router.put("/:projectId", (req, res) => {
   );
 });
 
-// DELETE /projects/:projectId — cascade delete tasks, stages, then project
+// DELETE /projects/:projectId — cascade handled by FK, but manual for safety
 router.delete("/:projectId", (req, res) => {
   const pid = req.params.projectId;
-  db.query("DELETE FROM task WHERE project_id = ?", [pid], (err) => {
+  db.query("DELETE FROM tasks WHERE project_id = ?", [pid], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    db.query("DELETE FROM project_status WHERE project_id = ?", [pid], (err2) => {
+    db.query("DELETE FROM stages WHERE project_id = ?", [pid], (err2) => {
       if (err2) return res.status(500).json({ error: err2.message });
-      db.query("DELETE FROM project WHERE project_id = ?", [pid], (err3) => {
+      db.query("DELETE FROM projects WHERE id = ?", [pid], (err3) => {
         if (err3) return res.status(500).json({ error: err3.message });
         res.json({ message: "Project deleted" });
       });
@@ -97,7 +97,7 @@ router.delete("/:projectId", (req, res) => {
 
 router.get("/:projectId/stages", (req, res) => {
   db.query(
-    "SELECT * FROM project_status WHERE project_id = ? ORDER BY order_number ASC",
+    "SELECT * FROM stages WHERE project_id = ? ORDER BY position ASC",
     [req.params.projectId],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -111,11 +111,11 @@ router.put("/:projectId/stages/reorder", (req, res) => {
   const { stages } = req.body;
   if (!stages || !stages.length) return res.json({ message: "Nothing to reorder" });
 
-  const promises = stages.map(({ status_id, order_number }) =>
+  const promises = stages.map(({ id, position }) =>
     new Promise((resolve, reject) => {
       db.query(
-        "UPDATE project_status SET order_number = ? WHERE status_id = ? AND project_id = ?",
-        [order_number, status_id, req.params.projectId],
+        "UPDATE stages SET position = ? WHERE id = ? AND project_id = ?",
+        [position, id, req.params.projectId],
         (err) => (err ? reject(err) : resolve())
       );
     })
@@ -128,31 +128,31 @@ router.put("/:projectId/stages/reorder", (req, res) => {
 
 router.post("/:projectId/stages", (req, res) => {
   const pid = req.params.projectId;
-  const { status_name, is_completed = false, task_limit = null } = req.body;
-  const rawOrderNumber = req.body.order_number;
+  const { status_name, is_completed = false, is_pending = false, task_limit = null } = req.body;
+  const rawPosition = req.body.position || req.body.order_number;
 
   if (!status_name || !status_name.trim()) {
     return res.status(400).json({ error: "status_name is required" });
   }
 
-  db.query("SELECT MAX(order_number) AS mx FROM project_status WHERE project_id = ?", [pid], (err, rows) => {
+  db.query("SELECT MAX(position) AS mx FROM stages WHERE project_id = ?", [pid], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
 
     const max = rows[0]?.mx != null ? Number(rows[0].mx) : 0;
-    const parsed = parseInt(rawOrderNumber, 10);
+    const parsed = parseInt(rawPosition, 10);
     const target = !isNaN(parsed) && parsed >= 1 ? Math.min(parsed, max + 1) : max + 1;
 
     db.query(
-      "UPDATE project_status SET order_number = order_number + 1 WHERE project_id = ? AND order_number >= ?",
+      "UPDATE stages SET position = position + 1 WHERE project_id = ? AND position >= ?",
       [pid, target],
       (err2) => {
         if (err2) return res.status(500).json({ error: err2.message });
         db.query(
-          `INSERT INTO project_status (project_id, status_name, order_number, is_completed, task_limit) VALUES (?, ?, ?, ?, ?)`,
-          [pid, status_name.trim(), target, is_completed ? 1 : 0, task_limit || null],
+          `INSERT INTO stages (project_id, name, position, is_completed, task_limit, is_pending) VALUES (?, ?, ?, ?, ?, ?)`,
+          [pid, status_name.trim(), target, is_completed ? 1 : 0, task_limit || null, is_pending ? 1 : 0],
           (err3, result) => {
             if (err3) return res.status(500).json({ error: err3.message });
-            res.status(201).json({ status_id: result.insertId, order_number: target });
+            res.status(201).json({ id: result.insertId, position: target });
           }
         );
       }
@@ -162,19 +162,20 @@ router.post("/:projectId/stages", (req, res) => {
 
 router.put("/:projectId/stages/:stageId", (req, res) => {
   const { stageId, projectId } = req.params;
-  const { status_name, is_completed, task_limit } = req.body;
+  const { status_name, is_completed, is_pending, task_limit } = req.body;
   const fields = [];
   const values = [];
 
-  if (status_name  !== undefined) { fields.push("status_name = ?");  values.push(status_name.trim()); }
+  if (status_name  !== undefined) { fields.push("name = ?");         values.push(status_name.trim()); }
   if (is_completed !== undefined) { fields.push("is_completed = ?"); values.push(is_completed ? 1 : 0); }
+  if (is_pending   !== undefined) { fields.push("is_pending = ?");   values.push(is_pending ? 1 : 0); }
   if (task_limit   !== undefined) { fields.push("task_limit = ?");   values.push(task_limit || null); }
 
   if (!fields.length) return res.status(400).json({ error: "Nothing to update" });
   values.push(stageId, projectId);
 
   db.query(
-    `UPDATE project_status SET ${fields.join(", ")} WHERE status_id = ? AND project_id = ?`,
+    `UPDATE stages SET ${fields.join(", ")} WHERE id = ? AND project_id = ?`,
     values,
     (err) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -187,18 +188,18 @@ router.delete("/:projectId/stages/:stageId", (req, res) => {
   const { stageId, projectId } = req.params;
 
   db.query(
-    "SELECT order_number FROM project_status WHERE status_id = ? AND project_id = ?",
+    "SELECT position FROM stages WHERE id = ? AND project_id = ?",
     [stageId, projectId],
     (err, rows) => {
       if (err)          return res.status(500).json({ error: err.message });
       if (!rows.length) return res.status(404).json({ error: "Stage not found" });
 
-      const { order_number } = rows[0];
-      db.query("DELETE FROM project_status WHERE status_id = ?", [stageId], (err2) => {
+      const { position } = rows[0];
+      db.query("DELETE FROM stages WHERE id = ?", [stageId], (err2) => {
         if (err2) return res.status(500).json({ error: err2.message });
         db.query(
-          "UPDATE project_status SET order_number = order_number - 1 WHERE project_id = ? AND order_number > ?",
-          [projectId, order_number],
+          "UPDATE stages SET position = position - 1 WHERE project_id = ? AND position > ?",
+          [projectId, position],
           (err3) => {
             if (err3) return res.status(500).json({ error: err3.message });
             res.json({ message: "Stage deleted" });

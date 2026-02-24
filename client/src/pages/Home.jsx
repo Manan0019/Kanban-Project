@@ -1,5 +1,19 @@
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import "./Home.css";
 
 const API = "http://localhost:5000/api";
@@ -73,6 +87,30 @@ export default function Home() {
   const [isDeleting, setIsDeleting] = useState(false);
 
   const navigate = useNavigate();
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const handleStageDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    setStages((prev) => {
+      const oi = prev.findIndex((s) => s.id === active.id);
+      const ni = prev.findIndex((s) => s.id === over.id);
+      // Shift pendingIdx and completedIdx to follow their stages
+      if (pendingIdx === oi) setPendingIdx(ni);
+      else if (oi < ni && pendingIdx > oi && pendingIdx <= ni)
+        setPendingIdx((p) => p - 1);
+      else if (oi > ni && pendingIdx < oi && pendingIdx >= ni)
+        setPendingIdx((p) => p + 1);
+      if (completedIdx === oi) setCompletedIdx(ni);
+      else if (oi < ni && completedIdx > oi && completedIdx <= ni)
+        setCompletedIdx((c) => c - 1);
+      else if (oi > ni && completedIdx < oi && completedIdx >= ni)
+        setCompletedIdx((c) => c + 1);
+      return arrayMove(prev, oi, ni);
+    });
+  };
 
   const fetchProjects = () =>
     fetch(`${API}/projects`)
@@ -166,7 +204,7 @@ export default function Home() {
   /* ── Edit ────────────────────────────────────────────────────────────── */
   const openEdit = (p) => {
     setEditProject(p);
-    setEpName(p.project_name);
+    setEpName(p.name);
     setEpDesc(p.description || "");
     setEpStart(p.start_date ? p.start_date.split("T")[0] : "");
     setEpEnd(p.end_date ? p.end_date.split("T")[0] : "");
@@ -176,7 +214,7 @@ export default function Home() {
     if (!epName.trim()) return;
     setSavingEdit(true);
     try {
-      await apiFetch(`${API}/projects/${editProject.project_id}`, "PUT", {
+      await apiFetch(`${API}/projects/${editProject.id}`, "PUT", {
         project_name: epName.trim(),
         description: epDesc.trim(),
         start_date: epStart || null,
@@ -194,7 +232,7 @@ export default function Home() {
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
-      await apiFetch(`${API}/projects/${deleteTarget.project_id}`, "DELETE");
+      await apiFetch(`${API}/projects/${deleteTarget.id}`, "DELETE");
       setDeleteTarget(null);
       fetchProjects();
     } finally {
@@ -203,7 +241,7 @@ export default function Home() {
   };
 
   const filtered = projects.filter((p) =>
-    p.project_name.toLowerCase().includes(search.toLowerCase()),
+    p.name.toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
@@ -274,9 +312,9 @@ export default function Home() {
           </div>
           {filtered.map((p) => (
             <ProjectCard
-              key={p.project_id}
+              key={p.id}
               project={p}
-              onOpen={() => navigate(`/project/${p.project_id}`)}
+              onOpen={() => navigate(`/project/${p.id}`)}
               onEdit={() => openEdit(p)}
               onDelete={() => setDeleteTarget(p)}
             />
@@ -411,58 +449,33 @@ export default function Home() {
                   </span>
                 </div>
 
-                <div className="stages-setup-list">
-                  {stages.map((stage, idx) => (
-                    <div key={stage.id} className="stage-setup-row">
-                      <span className="stage-idx">{idx + 1}</span>
-
-                      <input
-                        className="stage-name-input"
-                        placeholder={`Stage name`}
-                        value={stage.status_name}
-                        onChange={(e) =>
-                          updStage(idx, "status_name", e.target.value)
-                        }
-                      />
-
-                      <input
-                        className="stage-limit-input"
-                        type="number"
-                        min="1"
-                        placeholder="Limit"
-                        title="Max tasks (optional)"
-                        value={stage.task_limit}
-                        onChange={(e) =>
-                          updStage(idx, "task_limit", e.target.value)
-                        }
-                      />
-
-                      <button
-                        title="Set as pending stage (new tasks go here)"
-                        className={`sflag-btn ${pendingIdx === idx ? "sflag-pending-active" : ""}`}
-                        onClick={() => setPendingIdx(idx)}
-                      >
-                        🟡
-                      </button>
-
-                      <button
-                        title="Set as completed stage"
-                        className={`sflag-btn ${completedIdx === idx ? "sflag-completed-active" : ""}`}
-                        onClick={() => setCompletedIdx(idx)}
-                      >
-                        ✅
-                      </button>
-
-                      <button
-                        className="stage-del-btn"
-                        onClick={() => removeStage(idx)}
-                        disabled={stages.length <= 2}
-                      >
-                        ✕
-                      </button>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleStageDragEnd}
+                >
+                  <SortableContext
+                    items={stages.map((s) => s.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="stages-setup-list">
+                      {stages.map((stage, idx) => (
+                        <SortableStageRow
+                          key={stage.id}
+                          stage={stage}
+                          idx={idx}
+                          isPending={pendingIdx === idx}
+                          isCompleted={completedIdx === idx}
+                          onSetPending={() => setPendingIdx(idx)}
+                          onSetCompleted={() => setCompletedIdx(idx)}
+                          onUpdate={(field, val) => updStage(idx, field, val)}
+                          onRemove={() => removeStage(idx)}
+                          canRemove={stages.length > 2}
+                        />
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </SortableContext>
+                </DndContext>
 
                 <button className="add-stage-row-btn" onClick={addStage}>
                   + Add Another Stage
@@ -605,8 +618,8 @@ export default function Home() {
                 marginBottom: 24,
               }}
             >
-              <strong>"{deleteTarget.project_name}"</strong> and all its stages
-              and tasks will be permanently deleted. This cannot be undone.
+              <strong>"{deleteTarget.name}"</strong> and all its stages and
+              tasks will be permanently deleted. This cannot be undone.
             </p>
             <div
               className="home-modal-actions"
@@ -629,6 +642,92 @@ export default function Home() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── SortableStageRow for wizard drag-and-drop ───────────────────────────── */
+function SortableStageRow({
+  stage,
+  idx,
+  isPending,
+  isCompleted,
+  onSetPending,
+  onSetCompleted,
+  onUpdate,
+  onRemove,
+  canRemove,
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: stage.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.4 : 1,
+      }}
+      className="stage-setup-row"
+    >
+      <span className="stage-idx">{idx + 1}</span>
+
+      <span
+        className="stage-drag-handle"
+        {...attributes}
+        {...listeners}
+        title="Drag to reorder"
+      >
+        ⠿
+      </span>
+
+      <input
+        className="stage-name-input"
+        placeholder="Stage name"
+        value={stage.status_name}
+        onChange={(e) => onUpdate("status_name", e.target.value)}
+      />
+
+      <input
+        className="stage-limit-input"
+        type="number"
+        min="1"
+        placeholder="Limit"
+        title="Max tasks (optional)"
+        value={stage.task_limit}
+        onChange={(e) => onUpdate("task_limit", e.target.value)}
+      />
+
+      <button
+        title="Set as pending stage (new tasks go here)"
+        className={`sflag-btn ${isPending ? "sflag-pending-active" : ""}`}
+        onClick={onSetPending}
+      >
+        🟡
+      </button>
+
+      <button
+        title="Set as completed stage"
+        className={`sflag-btn ${isCompleted ? "sflag-completed-active" : ""}`}
+        onClick={onSetCompleted}
+      >
+        ✅
+      </button>
+
+      <button
+        className="stage-del-btn"
+        onClick={onRemove}
+        disabled={!canRemove}
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -656,11 +755,9 @@ function ProjectCard({ project, onOpen, onEdit, onDelete }) {
     <div className="project-card" onClick={onOpen}>
       <div
         className="project-card-top"
-        style={{ background: getGradient(project.project_id) }}
+        style={{ background: getGradient(project.id) }}
       >
-        <span className="project-initials">
-          {getInitials(project.project_name)}
-        </span>
+        <span className="project-initials">{getInitials(project.name)}</span>
 
         <div
           className="project-card-menu"
@@ -710,7 +807,7 @@ function ProjectCard({ project, onOpen, onEdit, onDelete }) {
       </div>
 
       <div className="project-card-body">
-        <h3 className="project-card-name">{project.project_name}</h3>
+        <h3 className="project-card-name">{project.name}</h3>
         {project.description && (
           <p className="project-card-desc">{project.description}</p>
         )}

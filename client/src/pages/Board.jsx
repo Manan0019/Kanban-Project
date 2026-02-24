@@ -69,7 +69,7 @@ function SortableStage({ stage }) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: stage.status_id });
+  } = useSortable({ id: stage.id });
   return (
     <div
       ref={setNodeRef}
@@ -83,7 +83,7 @@ function SortableStage({ stage }) {
       {...listeners}
     >
       <span className="rearrange-grip">⠿</span>
-      {stage.status_name}
+      {stage.name}
       {(stage.is_completed === 1 || stage.is_completed === true) && (
         <span className="pill-badge">✓ Final</span>
       )}
@@ -157,14 +157,14 @@ export default function Board() {
   const fetchProject = async () => {
     const d = await apiFetch(`${API}/projects`);
     if (Array.isArray(d)) {
-      const p = d.find((x) => String(x.project_id) === String(id));
+      const p = d.find((x) => String(x.id) === String(id));
       if (p) setProject(p);
     }
   };
   const fetchStages = async () => {
     const d = await apiFetch(`${API}/projects/${id}/stages`);
     if (Array.isArray(d))
-      setStages([...d].sort((a, b) => a.order_number - b.order_number));
+      setStages([...d].sort((a, b) => a.position - b.position));
   };
   const fetchTasks = async () => {
     const d = await apiFetch(`${API}/tasks/project/${id}`);
@@ -183,7 +183,7 @@ export default function Board() {
   /* ── Drag ───────────────────────────────────────────────────────────────── */
   const handleDragStart = ({ active }) => {
     for (const tasks of Object.values(tasksByColumn)) {
-      const t = tasks.find((x) => x.task_id === active.id);
+      const t = tasks.find((x) => x.id === active.id);
       if (t) {
         setActiveTask(t);
         break;
@@ -199,15 +199,15 @@ export default function Board() {
     let updated = { ...tasksByColumn };
     if (String(src) === String(tgt)) {
       const col = tasksByColumn[src] ?? [];
-      const oi = col.findIndex((t) => t.task_id === active.id),
-        ni = col.findIndex((t) => t.task_id === over.id);
+      const oi = col.findIndex((t) => t.id === active.id),
+        ni = col.findIndex((t) => t.id === over.id);
       if (oi === -1 || ni === -1 || oi === ni) return;
       updated = { ...tasksByColumn, [src]: arrayMove(col, oi, ni) };
       setTBC(updated);
     } else {
       const s = [...(tasksByColumn[src] ?? [])],
         t = [...(tasksByColumn[tgt] ?? [])];
-      const i = s.findIndex((x) => x.task_id === active.id);
+      const i = s.findIndex((x) => x.id === active.id);
       if (i === -1) return;
       const [mv] = s.splice(i, 1);
       t.push({ ...mv, status_id: Number(tgt) });
@@ -221,7 +221,7 @@ export default function Board() {
     for (const [cid, tasks] of Object.entries(updated))
       tasks.forEach((task, i) =>
         payload.push({
-          task_id: task.task_id,
+          id: task.id,
           status_id: Number(cid),
           position: i,
         }),
@@ -250,7 +250,7 @@ export default function Board() {
     setSavingTask(true);
     try {
       if (editingTask) {
-        await apiFetch(`${API}/tasks/${editingTask.task_id}`, "PUT", {
+        await apiFetch(`${API}/tasks/${editingTask.id}`, "PUT", {
           title: tTitle.trim(),
           description: tDesc,
           is_priority: tPriority,
@@ -258,16 +258,18 @@ export default function Board() {
       } else {
         // Find pending stage
         const pendingStage =
+          stages.find((s) => s.is_pending === 1 || s.is_pending === true) ??
           stages.find(
             (s) => !(s.is_completed === 1 || s.is_completed === true),
-          ) ?? stages[0];
+          ) ??
+          stages[0];
         if (!pendingStage) {
           alert("Create at least one stage first.");
           return;
         }
         await apiFetch(`${API}/tasks`, "POST", {
           project_id: id,
-          status_id: pendingStage.status_id,
+          status_id: pendingStage.id,
           title: tTitle.trim(),
           description: tDesc,
           is_priority: tPriority,
@@ -288,7 +290,7 @@ export default function Board() {
     setStDesc("");
     setShowSubtask(true);
     setLoadingST(true);
-    const d = await apiFetch(`${API}/tasks/${task.task_id}/subtasks`);
+    const d = await apiFetch(`${API}/tasks/${task.id}/subtasks`);
     setSubtasks(Array.isArray(d) ? d : []);
     setLoadingST(false);
   };
@@ -302,13 +304,11 @@ export default function Board() {
         status_id: subtaskParent.status_id,
         title: stTitle.trim(),
         description: stDesc,
-        parent_task_id: subtaskParent.task_id,
+        parent_task_id: subtaskParent.id,
       });
       setStTitle("");
       setStDesc("");
-      const d = await apiFetch(
-        `${API}/tasks/${subtaskParent.task_id}/subtasks`,
-      );
+      const d = await apiFetch(`${API}/tasks/${subtaskParent.id}/subtasks`);
       setSubtasks(Array.isArray(d) ? d : []);
       // Update count in parent display
       await fetchTasks();
@@ -318,8 +318,8 @@ export default function Board() {
   };
 
   const handleDeleteSubtask = async (st) => {
-    await apiFetch(`${API}/tasks/${st.task_id}`, "DELETE");
-    const d = await apiFetch(`${API}/tasks/${subtaskParent.task_id}/subtasks`);
+    await apiFetch(`${API}/tasks/${st.id}`, "DELETE");
+    const d = await apiFetch(`${API}/tasks/${subtaskParent.id}/subtasks`);
     setSubtasks(Array.isArray(d) ? d : []);
     await fetchTasks();
   };
@@ -329,14 +329,14 @@ export default function Board() {
       (s) => s.is_completed === 1 || s.is_completed === true,
     );
     const firstStage = stages[0];
-    const isDone = String(st.status_id) === String(completedStage?.status_id);
+    const isDone = String(st.status_id) === String(completedStage?.id);
     const newStatusId = isDone
-      ? firstStage?.status_id
-      : (completedStage?.status_id ?? st.status_id);
-    await apiFetch(`${API}/tasks/${st.task_id}/status`, "PUT", {
+      ? firstStage?.id
+      : (completedStage?.id ?? st.status_id);
+    await apiFetch(`${API}/tasks/${st.id}/status`, "PUT", {
       status_id: newStatusId,
     });
-    const d = await apiFetch(`${API}/tasks/${subtaskParent.task_id}/subtasks`);
+    const d = await apiFetch(`${API}/tasks/${subtaskParent.id}/subtasks`);
     setSubtasks(Array.isArray(d) ? d : []);
   };
 
@@ -351,16 +351,16 @@ export default function Board() {
   };
   const openEditStage = (s) => {
     setEditStage(s);
-    setSgName(s.status_name);
+    setSgName(s.name);
     setSgCompleted(s.is_completed === 1 || s.is_completed === true);
-    setSgPosition(String(s.order_number));
+    setSgPosition(String(s.position));
     setSgLimit(s.task_limit != null ? String(s.task_limit) : "");
     setShowStage(true);
   };
 
   const buildCreatePL = (isC) => ({
     status_name: sgName.trim(),
-    order_number: sgCompleted
+    position: sgCompleted
       ? stages.length + 1
       : sgPosition
         ? Math.max(1, Math.min(Number(sgPosition), stages.length + 1))
@@ -374,7 +374,7 @@ export default function Board() {
     const conflict = stages.find(
       (s) =>
         (s.is_completed === 1 || s.is_completed === true) &&
-        (!editStage || s.status_id !== editStage.status_id),
+        (!editStage || s.id !== editStage.id),
     );
     if (sgCompleted && conflict) {
       setPendingPL(editStage ? null : buildCreatePL(true));
@@ -412,7 +412,7 @@ export default function Board() {
     setSavingSg(true);
     try {
       const res = await apiFetch(
-        `${API}/projects/${id}/stages/${editStage.status_id}`,
+        `${API}/projects/${id}/stages/${editStage.id}`,
         "PUT",
         {
           status_name: sgName.trim(),
@@ -438,11 +438,11 @@ export default function Board() {
     const ex = stages.find(
       (s) =>
         (s.is_completed === 1 || s.is_completed === true) &&
-        (!editStage || s.status_id !== editStage.status_id),
+        (!editStage || s.id !== editStage.id),
     );
     if (ex)
-      await apiFetch(`${API}/projects/${id}/stages/${ex.status_id}`, "PUT", {
-        status_name: ex.status_name,
+      await apiFetch(`${API}/projects/${id}/stages/${ex.id}`, "PUT", {
+        status_name: ex.name,
         is_completed: false,
         task_limit: ex.task_limit,
       });
@@ -463,8 +463,8 @@ export default function Board() {
   const handleDeleteStage = (s) =>
     setConfirm({
       type: "delete-stage",
-      id: s.status_id,
-      label: `Delete stage "${s.status_name}"? Tasks inside become unassigned.`,
+      id: s.id,
+      label: `Delete stage "${s.name}"? Tasks inside become unassigned.`,
     });
 
   /* ── Rearrange ───────────────────────────────────────────────────────────── */
@@ -474,15 +474,15 @@ export default function Board() {
   };
   const handleRRDragEnd = ({ active, over }) => {
     if (!over || active.id === over.id) return;
-    const oi = rrList.findIndex((s) => s.status_id === active.id),
-      ni = rrList.findIndex((s) => s.status_id === over.id);
+    const oi = rrList.findIndex((s) => s.id === active.id),
+      ni = rrList.findIndex((s) => s.id === over.id);
     setRRList(arrayMove(rrList, oi, ni));
   };
   const saveRearrange = async () => {
     setSavingRR(true);
     const pl = rrList.map((s, i) => ({
-      status_id: s.status_id,
-      order_number: i + 1,
+      id: s.id,
+      position: i + 1,
     }));
     const res = await apiFetch(
       `${API}/projects/${id}/stages/reorder`,
@@ -512,27 +512,27 @@ export default function Board() {
       await fetchStages();
       await fetchTasks();
     } else if (a.type === "move") {
-      await apiFetch(`${API}/tasks/${a.extra.task.task_id}/status`, "PUT", {
-        status_id: a.extra.nextStage.status_id,
+      await apiFetch(`${API}/tasks/${a.extra.task.id}/status`, "PUT", {
+        status_id: a.extra.nextStage.id,
       });
       await fetchTasks();
     }
   };
 
   const handleMoveToNext = (task, curStage) => {
-    const idx = stages.findIndex((s) => s.status_id === curStage.status_id);
+    const idx = stages.findIndex((s) => s.id === curStage.id);
     const next = stages[idx + 1];
     if (!next) return;
     setConfirm({
       type: "move",
-      label: `Move "${task.title}" → "${next.status_name}"?`,
+      label: `Move "${task.title}" → "${next.name}"?`,
       extra: { task, nextStage: next },
     });
   };
   const handleDeleteTask = (t) =>
     setConfirm({
       type: "delete-task",
-      id: t.task_id,
+      id: t.id,
       label: `Delete "${t.title}"? Cannot be undone.`,
     });
 
@@ -546,7 +546,7 @@ export default function Board() {
           </button>
           <span className="nav-sep" />
           <span className="nav-project-name">
-            {project?.project_name ?? "Loading…"}
+            {project?.name ?? "Loading…"}
           </span>
         </div>
         <div className="navbar-center">
@@ -599,10 +599,10 @@ export default function Board() {
               ) : (
                 stages.map((stage) => (
                   <Column
-                    key={stage.status_id}
+                    key={stage.id}
                     stage={stage}
                     stages={stages}
-                    tasks={tasksByColumn[stage.status_id] ?? []}
+                    tasks={tasksByColumn[stage.id] ?? []}
                     onEditTask={openEditTask}
                     onDeleteTask={handleDeleteTask}
                     onMoveToNext={handleMoveToNext}
@@ -794,10 +794,10 @@ export default function Board() {
               );
               const isDone =
                 completedStage &&
-                String(st.status_id) === String(completedStage.status_id);
+                String(st.status_id) === String(completedStage.id);
               return (
                 <div
-                  key={st.task_id}
+                  key={st.id}
                   className={`subtask-item ${isDone ? "subtask-done" : ""}`}
                 >
                   <button
@@ -837,9 +837,7 @@ export default function Board() {
                           (x) =>
                             x.is_completed === 1 || x.is_completed === true,
                         );
-                        return (
-                          cs && String(s.status_id) === String(cs.status_id)
-                        );
+                        return cs && String(s.id) === String(cs.id);
                       }).length /
                         subtasks.length) *
                         100,
@@ -853,7 +851,7 @@ export default function Board() {
                     const cs = stages.find(
                       (x) => x.is_completed === 1 || x.is_completed === true,
                     );
-                    return cs && String(s.status_id) === String(cs.status_id);
+                    return cs && String(s.id) === String(cs.id);
                   }).length
                 }{" "}
                 / {subtasks.length} done
@@ -983,8 +981,8 @@ export default function Board() {
                 stages.find(
                   (s) =>
                     (s.is_completed === 1 || s.is_completed === true) &&
-                    (!editStage || s.status_id !== editStage.status_id),
-                )?.status_name
+                    (!editStage || s.id !== editStage.id),
+                )?.name
               }
               "
             </strong>{" "}
@@ -1029,12 +1027,12 @@ export default function Board() {
             onDragEnd={handleRRDragEnd}
           >
             <SortableContext
-              items={rrList.map((s) => s.status_id)}
+              items={rrList.map((s) => s.id)}
               strategy={verticalListSortingStrategy}
             >
               <div className="rearrange-list">
                 {rrList.map((stage, idx) => (
-                  <div key={stage.status_id} className="rearrange-row">
+                  <div key={stage.id} className="rearrange-row">
                     <span className="rearrange-num">{idx + 1}</span>
                     <SortableStage stage={stage} />
                   </div>
@@ -1103,7 +1101,7 @@ function Column({
   onDeleteStage,
   onRearrange,
 }) {
-  const { setNodeRef } = useDroppable({ id: stage.status_id });
+  const { setNodeRef } = useDroppable({ id: stage.id });
   const [ddOpen, setDDOpen] = useState(false);
   const ddRef = useRef(null);
   const isCompleted = stage.is_completed === 1 || stage.is_completed === true;
@@ -1128,7 +1126,7 @@ function Column({
     <div ref={setNodeRef} className={cls}>
       <div className="column-header">
         <div className="column-title-row">
-          <h3 className="column-title">{stage.status_name}</h3>
+          <h3 className="column-title">{stage.name}</h3>
           <div className="column-badges">
             {isCompleted && (
               <span className="stage-badge completed-badge">✓ Final</span>
@@ -1194,19 +1192,17 @@ function Column({
       )}
 
       <SortableContext
-        id={stage.status_id}
-        items={tasks.map((t) => t.task_id)}
+        id={stage.id}
+        items={tasks.map((t) => t.id)}
         strategy={verticalListSortingStrategy}
       >
         <div className="column-tasks">
           {tasks.map((task) => (
             <TaskCard
-              key={task.task_id}
+              key={task.id}
               task={task}
               stage={stage}
-              isLastStage={
-                stages[stages.length - 1]?.status_id === stage.status_id
-              }
+              isLastStage={stages[stages.length - 1]?.id === stage.id}
               stages={stages}
               onEdit={onEditTask}
               onDelete={onDeleteTask}
@@ -1241,7 +1237,7 @@ function TaskCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: task.task_id });
+  } = useSortable({ id: task.id });
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const isPriority = task.is_priority === 1 || task.is_priority === true;

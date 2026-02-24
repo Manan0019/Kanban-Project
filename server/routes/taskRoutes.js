@@ -2,24 +2,24 @@ const express = require("express");
 const router  = express.Router();
 const db      = require("../config/db");
 
-// POST create task (supports is_priority and parent_task_id for subtasks)
+// POST create task
 router.post("/", (req, res) => {
   const { project_id, status_id, title, description, is_priority = 0, parent_task_id = null } = req.body;
 
   db.query(
-    "SELECT COUNT(*) AS cnt FROM task WHERE status_id = ? AND parent_task_id IS NULL",
+    "SELECT COUNT(*) AS cnt FROM tasks WHERE status_id = ? AND parent_task_id IS NULL",
     [status_id],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
       const position = rows[0].cnt;
 
       db.query(
-        `INSERT INTO task (project_id, status_id, title, description, position, is_priority, parent_task_id)
+        `INSERT INTO tasks (project_id, status_id, title, description, position, is_priority, parent_task_id)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [project_id, status_id, title, description, position, is_priority ? 1 : 0, parent_task_id || null],
         (err2, result) => {
           if (err2) return res.status(500).json({ error: err2.message });
-          db.query("SELECT * FROM task WHERE task_id = ?", [result.insertId], (err3, r) => {
+          db.query("SELECT * FROM tasks WHERE id = ?", [result.insertId], (err3, r) => {
             if (err3) return res.status(500).json({ error: err3.message });
             res.status(201).json(r[0]);
           });
@@ -32,7 +32,7 @@ router.post("/", (req, res) => {
 // GET tasks by project (only top-level tasks)
 router.get("/project/:projectId", (req, res) => {
   db.query(
-    `SELECT * FROM task WHERE project_id = ? AND parent_task_id IS NULL
+    `SELECT * FROM tasks WHERE project_id = ? AND parent_task_id IS NULL
      ORDER BY status_id ASC, COALESCE(position,0) ASC`,
     [req.params.projectId],
     (err, rows) => {
@@ -45,7 +45,7 @@ router.get("/project/:projectId", (req, res) => {
 // GET subtasks for a task
 router.get("/:taskId/subtasks", (req, res) => {
   db.query(
-    "SELECT * FROM task WHERE parent_task_id = ? ORDER BY created_at ASC",
+    "SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC",
     [req.params.taskId],
     (err, rows) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -59,11 +59,11 @@ router.put("/reorder", (req, res) => {
   const { tasks } = req.body;
   if (!tasks || !tasks.length) return res.json({ message: "Nothing to reorder" });
 
-  const promises = tasks.map(({ task_id, status_id, position }) =>
+  const promises = tasks.map(({ id, status_id, position }) =>
     new Promise((resolve, reject) => {
       db.query(
-        "UPDATE task SET status_id = ?, position = ? WHERE task_id = ?",
-        [status_id, position, task_id],
+        "UPDATE tasks SET status_id = ?, position = ? WHERE id = ?",
+        [status_id, position, id],
         (err) => (err ? reject(err) : resolve())
       );
     })
@@ -78,7 +78,7 @@ router.put("/reorder", (req, res) => {
 router.put("/:taskId/status", (req, res) => {
   const { status_id } = req.body;
   db.query(
-    "UPDATE task SET status_id = ? WHERE task_id = ?",
+    "UPDATE tasks SET status_id = ? WHERE id = ?",
     [status_id, req.params.taskId],
     (err) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -101,7 +101,7 @@ router.put("/:taskId", (req, res) => {
   values.push(req.params.taskId);
 
   db.query(
-    `UPDATE task SET ${fields.join(", ")} WHERE task_id = ?`,
+    `UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`,
     values,
     (err) => {
       if (err) return res.status(500).json({ error: err.message });
@@ -113,9 +113,9 @@ router.put("/:taskId", (req, res) => {
 // DELETE /tasks/:taskId (also deletes subtasks)
 router.delete("/:taskId", (req, res) => {
   const tid = req.params.taskId;
-  db.query("DELETE FROM task WHERE parent_task_id = ?", [tid], (err) => {
+  db.query("DELETE FROM tasks WHERE parent_task_id = ?", [tid], (err) => {
     if (err) return res.status(500).json({ error: err.message });
-    db.query("DELETE FROM task WHERE task_id = ?", [tid], (err2) => {
+    db.query("DELETE FROM tasks WHERE id = ?", [tid], (err2) => {
       if (err2) return res.status(500).json({ error: err2.message });
       res.json({ message: "Task deleted" });
     });
