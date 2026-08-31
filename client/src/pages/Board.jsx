@@ -39,7 +39,7 @@ async function apiFetch(url, method = "GET", body, raw = false) {
   }
 }
 
-/* ── Modal ───────────────────────────────────────────────────────────────── */
+/* ── Modal ───────────────────────────────────────────────────────────── */
 function Modal({ children, onClose }) {
   useEffect(() => {
     const h = (e) => {
@@ -91,7 +91,7 @@ function SortableStage({ stage }) {
   );
 }
 
-/* ── Board ───────────────────────────────────────────────────────────────── */
+/* ── Board ─────────────────────────────────────── ───────────── */
 export default function Board() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -193,8 +193,13 @@ export default function Board() {
   const handleDragEnd = async ({ active, over }) => {
     setActiveTask(null);
     if (!over) return;
-    const src = active.data.current?.sortable?.containerId;
-    const tgt = over.data.current?.sortable?.containerId ?? over.id;
+    const src = String(active.data.current?.sortable?.containerId ?? "");
+    const overContainerId = over.data.current?.sortable?.containerId;
+    const overStage = stages.find((stage) => String(stage.id) === String(over.id));
+    const overTaskColumn = Object.entries(tasksByColumn).find(([, tasks]) =>
+      tasks.some((task) => String(task.id) === String(over.id)),
+    )?.[0];
+    const tgt = String(overContainerId ?? overStage?.id ?? overTaskColumn ?? "");
     if (!src || !tgt) return;
     let updated = { ...tasksByColumn };
     if (String(src) === String(tgt)) {
@@ -213,9 +218,6 @@ export default function Board() {
       t.push({ ...mv, status_id: Number(tgt) });
       updated = { ...tasksByColumn, [src]: s, [tgt]: t };
       setTBC(updated);
-      await apiFetch(`${API}/tasks/${active.id}/status`, "PUT", {
-        status_id: Number(tgt),
-      });
     }
     const payload = [];
     for (const [cid, tasks] of Object.entries(updated))
