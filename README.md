@@ -235,8 +235,8 @@ Remove the outer code block after adding the real image files so GitHub renders 
 ### 1. Clone
 
 ```bash
-git clone <YOUR-REPOSITORY-URL>
-cd <YOUR-REPOSITORY-FOLDER>
+git clone https://github.com/Manan0019/Kanban-Project.git
+cd Kanban-Project
 ```
 
 ### 2. Install dependencies
