@@ -209,7 +209,7 @@ UI Re-render
 ## Screenshots
 
 
-```md
+
 ### Home Screen
 ![Home Screen](screenshots/home-screen.jpg)
 
@@ -233,7 +233,7 @@ UI Re-render
 
 ### Stage Reordering Dialog Box
 ![Stage Reordering Dialog Box](screenshots/stage-reordering-dialog-box.jpg)
-```
+
 
 ## Local Setup
 
