@@ -208,25 +208,32 @@ UI Re-render
 
 ## Screenshots
 
-Create a `screenshots` folder in the repository and add your best application screenshots.
-
-Suggested README layout:
 
 ```md
-### Project Dashboard
-![Project Dashboard](screenshots/project-dashboard.png)
+### Home Screen
+![Home Screen](screenshots/home-screen.jpg)
 
-### Kanban Board
-![Kanban Board](screenshots/kanban-board.png)
+### Project Creation Dialog box 
+![Project Creation Dialog box](screenshots/project-creation-dialog-box.jpg)
 
-### Task Creation
-![Task Creation](screenshots/task-creation.png)
+### Kanban Board Layout
+![Kanban Board Layout](screenshots/kanban-board-layout.jpg)
 
-### Drag-and-Drop
-![Task Movement](screenshots/task-movement.png)
+### Kanban Board with Tasks
+![Kanban Board with Tasks](screenshots/kanban-board-with-tasks.jpg)
+
+### Task Movement Between Stages
+![Task Movement Between Stages](screenshots/task-movement-between-stages.jpg)
+
+### Task Creation Dialog Box
+![Task Creation Dialog Box](screenshots/task-creation-dialog-box.jpg)
+
+### Stage Creation Dialog Box
+![Stage Creation Dialog Box](screenshots/stage-creation-dialog-box.jpg)
+
+### Stage Reordering Dialog Box
+![Stage Reordering Dialog Box](screenshots/stage-reordering-dialog-box.jpg)
 ```
-
-Remove the outer code block after adding the real image files so GitHub renders them.
 
 ## Local Setup
 
@@ -273,13 +280,6 @@ npm start
 ### 5. Start the frontend
 
 Example:
-
-```bash
-cd frontend
-npm start
-```
-
-If the frontend uses Vite, use the appropriate script, commonly:
 
 ```bash
 npm run dev
