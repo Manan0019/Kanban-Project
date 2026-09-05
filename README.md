@@ -208,79 +208,91 @@ UI Re-render
 
 ## Screenshots
 
+| Home Screen | Kanban Board Layout |
+| :---: | :---: |
+| ![Home Screen](screenshots/home-screen.jpg) | ![Kanban Board Layout](screenshots/kanban-board-layout.jpg) |
 
+| Kanban Board with Tasks | Task Movement |
+| :---: | :---: |
+| ![Kanban Board with Tasks](screenshots/kanban-board-with-tasks.jpg) | ![Task Movement](screenshots/task-movement-between-stages.jpg) |
 
-### Home Screen
-![Home Screen](screenshots/home-screen.jpg)
-
-### Project Creation Dialog box 
-![Project Creation Dialog box](screenshots/project-creation-dialog-box.jpg)
-
-### Kanban Board Layout
-![Kanban Board Layout](screenshots/kanban-board-layout.jpg)
-
-### Kanban Board with Tasks
-![Kanban Board with Tasks](screenshots/kanban-board-with-tasks.jpg)
-
-### Task Movement Between Stages
-![Task Movement Between Stages](screenshots/task-movement-between-stages.jpg)
-
-### Task Creation Dialog Box
-![Task Creation Dialog Box](screenshots/task-creation-dialog-box.jpg)
-
-### Stage Creation Dialog Box
-![Stage Creation Dialog Box](screenshots/stage-creation-dialog-box.jpg)
-
-### Stage Reordering Dialog Box
-![Stage Reordering Dialog Box](screenshots/stage-reordering-dialog-box.jpg)
-
+| Stage Management | Task Creation Dialog |
+| :---: | :---: |
+| ![Stage Reordering Dialog Box](screenshots/stage-reordering-dialog-box.jpg) | ![Task Creation Dialog Box](screenshots/task-creation-dialog-box.jpg) |
 
 ## Local Setup
 
-> **Important:** The internship report documents the technology stack and architecture, but it does not specify the repository's exact package scripts, environment-variable names, SQL import file, directory names, or port numbers. Adjust the examples below to match the repository.
+Follow these instructions to run the application locally on your machine.
 
-### 1. Clone
+### Prerequisites
+- [Node.js](https://nodejs.org/) (v16 or higher)
+- [MySQL Server](https://dev.mysql.com/downloads/mysql/)
 
+---
+
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/Manan0019/Kanban-Project.git
 cd Kanban-Project
 ```
 
-### 2. Install dependencies
+---
 
-Example:
+### 2. Database Setup
+1. Open MySQL CLI or MySQL Workbench.
+2. Create a new database:
+   ```sql
+   CREATE DATABASE kanban_db;
+   ```
+3. Import the tables and initial schema using the provided SQL file:
+   - **Using MySQL CLI:**
+     ```bash
+     mysql -u root -p kanban_db < database/kanban_setup.sql
+     ```
+   - **Using MySQL Workbench / phpMyAdmin:** Open `database/kanban_setup.sql` and run all queries into `kanban_db`.
 
-```bash
-cd frontend
-npm install
+---
 
-cd ../backend
-npm install
-```
+### 3. Backend Configuration & Startup
+1. Navigate to the `backend` folder:
+   ```bash
+   cd backend
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Create a `.env` file inside the `backend` directory with your database connection details:
+   ```env
+   PORT=5000
+   DB_HOST=localhost
+   DB_USER=root
+   DB_PASSWORD=your_mysql_password
+   DB_NAME=kanban_db
+   ```
+   *(Replace `your_mysql_password` and `root` with your local MySQL credentials).*
 
-### 3. Configure MySQL
+4. Start the backend server:
+   ```bash
+   npm start
+   ```
 
-Create a MySQL database and configure the backend database connection using the credentials expected by the project.
+---
 
-The application requires relational data for:
-
-- Projects
-- Stages
-- Tasks
-
-### 4. Start the backend
-
-Example:
-
-```bash
-cd backend
-npm start
-```
-
-### 5. Start the frontend
-
-Example:
-
+### 4. Frontend Setup & Startup
+1. Open a new terminal tab and navigate to the `frontend` folder:
+   ```bash
+   cd frontend
+   ```
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the React development server:
+   ```bash
+   npm start
+   ```
+4. Access the web interface at `http://localhost:3000` (or the port specified in your terminal).
 ```bash
 npm run dev
 ```
